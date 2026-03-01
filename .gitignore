@@ -1,0 +1,15 @@
+# --- IGNORAR DATOS PESADOS ---
+*.hdf5
+*.parquet
+*.csv
+*.zip
+
+# --- IGNORAR CARPETAS DE RESULTADOS ---
+**/DATASET_LISTO/
+**/models/
+**/outputs/
+
+# --- ARCHIVOS DE SISTEMA Y PYTHON ---
+__pycache__/
+.ipynb_checkpoints/
+.DS_Store
