@@ -181,7 +181,7 @@ class GaitEvaluator:
                 outputs = self.model(x_batch)
                 
                 preds = torch.argmax(outputs, dim=1)
-                # OBTENER PROBABILIDADES PARA LA CLASE POSITIVA (EM) PARA EL AUC
+                # OBTENER PROBABILIDADES PARA LA CLASE POSITIVA (MARCHA) PARA EL AUC
                 probs = torch.softmax(outputs, dim=1)[:, 1]
                 
                 y_true.extend(y_batch.numpy())
