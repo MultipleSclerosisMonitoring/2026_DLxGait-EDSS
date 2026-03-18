@@ -1,6 +1,6 @@
 # FASE 1: PIPELINE DE DETECCIÓN DE MARCHA CON TRANSFORMERS
 
-Este repositorio contiene el flujo de trabajo completo desarrollado para la clasificación de señales inerciales (Reposo vs. Marcha). El proyecto abarca todo el ciclo de vida de los datos y el modelado predictivo.
+Este repositorio contiene el flujo de trabajo completo para el modelo de clasificación de la marcha.
 
 * **Extracción y Limpieza:** Procesamiento de datos crudos procedentes de sensores inerciales y estructuración en formato HDF5.
 * **Ingeniería de Características:** Transformación de ventanas temporales y extracción de la Densidad Espectral de Potencia (PSD) mediante FFT
