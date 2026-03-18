@@ -4,7 +4,7 @@ Este repositorio contiene el flujo de trabajo completo para el modelo de clasifi
 
 * **Extracción y Limpieza:** Procesamiento de datos crudos procedentes de sensores inerciales y estructuración en formato HDF5.
 * **Ingeniería de Características:** Transformación de ventanas temporales y extracción de la Densidad Espectral de Potencia (PSD) mediante FFT
-* **Entrenamiento de Modelos:** 
+* **Entrenamiento de Modelos** 
 
 Tras la fase de experimentación, el **modelo basado exclusivamente en el dominio de la frecuencia (FFT)** demostró el rendimiento más robusto (Accuracy > 96% y alta invarianza a la amplitud). 
 
