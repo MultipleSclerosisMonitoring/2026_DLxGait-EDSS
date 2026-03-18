@@ -1,15 +1,21 @@
-# EVALUACIÓN DE MODELO DE MARCHA (FFT)
+# FASE 1: PIPELINE DE DETECCIÓN DE MARCHA CON TRANSFORMERS
 
-Este repositorio contiene los pesos y el código para ejecutar la inferencia del modelo basado en el dominio de la frecuencia (FFT) para la detección de marcha.
+Este repositorio contiene el flujo de trabajo completo desarrollado para la clasificación de señales inerciales (Reposo vs. Marcha). El proyecto abarca todo el ciclo de vida de los datos y el modelado predictivo.
 
-## REQUISITOS
-Archivos `modelo_frecuencia.pth` y `scaler_gait.joblib` en el mismo directorio que el script.
+* **Extracción y Limpieza:** Procesamiento de datos crudos procedentes de sensores inerciales y estructuración en formato HDF5.
+* **Ingeniería de Características:** Transformación de ventanas temporales y extracción de la Densidad Espectral de Potencia (PSD) mediante FFT
+* **Entrenamiento de Modelos:** 
 
-`pip install torch numpy joblib scipy pydantic h5py scikit-learn`
+Tras la fase de experimentación, el **modelo basado exclusivamente en el dominio de la frecuencia (FFT)** demostró el rendimiento más robusto (Accuracy > 96% y alta invarianza a la amplitud). 
 
-## SCRIPT DE EVALUACIÓN
-Código para cargar el modelo preentrenado, aplicar el preprocesamiento y generar métricas de evaluación (Accuracy, Matriz de Confusión) sobre nuevos datos etiquetados en formato HDF5.
+---
 
+## MODELO FFT
+
+Los archivos `modelo_frecuencia.pth` (pesos) y `scaler_gait.joblib` (parámetros de estandarización) deberian estar en la misma ruta que el script de evaluación.
+
+```bash
+pip install torch numpy joblib scipy pydantic h5py scikit-learn
 ```python
 import torch
 import torch.nn as nn
