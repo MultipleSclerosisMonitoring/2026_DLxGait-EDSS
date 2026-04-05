@@ -22,7 +22,7 @@ from sklearn.metrics import confusion_matrix, classification_report, roc_auc_sco
 from scipy.fft import rfft
 import joblib
 
-############################# FASE 1: Carga y Preparación de Tensores 
+############################# FASE 1: CARGA Y PREPARACION DE TENSORES
 
 class ModelConfig(BaseModel):
     h5_path: FilePath 
@@ -83,10 +83,9 @@ class GaitDatasetLoader:
         return scaled_flat.reshape(n_samples, n_steps, n_features)
 
     def get_all_raw_data(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-       
         return self._load_data()
 
-############################## FASE 2: ARQ DEL MODELO
+############################## FASE 2: ARQUITECTURA DEL MODELO
 
 class TransformerConfig(BaseModel):
     input_dim: PositiveInt = 290
@@ -193,11 +192,11 @@ class GaitEvaluator:
         print(f"\n# METRICAS DETALLADAS - {title}")
         print(f"  - ROC AUC SCORE: {auc_score:.4f}")
         print("-" * 40)
-        print(classification_report(y_true, y_pred, target_names=['Nomarcha', 'Marcha']))
+        print(classification_report(y_true, y_pred, target_names=['NO MARCHA', 'MARCHA']))
 
         cm = confusion_matrix(y_true, y_pred)
         plt.figure(figsize=(8, 6))
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['Nomarcha', 'Marcha'], yticklabels=['Nomarcha', 'Marcha'])
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['NO MARCHA', 'MARCHA'], yticklabels=['NO MARCHA', 'MARCHA'])
         plt.title(f'MATRIZ CONFUSION - {title}\nAUC: {auc_score:.4f}')
         plt.xlabel('PREDICHO')
         plt.ylabel('REAL')
@@ -227,7 +226,7 @@ class FFTModel(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.classifier(x)
 
-############################## FASE 6: ARQ MODELO HIBRIDO 
+############################## FASE 6: ARQUITECTURA MODELO HIBRIDO 
 
 class GaitHybridModel(nn.Module):
     def __init__(self, t_cfg: TransformerConfig, pretrained_transformer: nn.Module = None):
@@ -332,7 +331,7 @@ def run_fft_stress_test(x_all: np.ndarray, y_all: np.ndarray, groups_all: np.nda
 if __name__ == "__main__":
 
     try:
-        H5_PATH = Path(r"C:\Users\jairi\OneDrive\Escritorio\TFM\CODIGOS PREPROCESAMIENTO\DATASET_LISTO\dataset_jerarquico.hdf5")
+        H5_PATH = Path(r"C:\Users\jairi\OneDrive\Escritorio\TFM\03_CODIGOS PREPROCESAMIENTO\DATASET_LISTO\dataset_jerarquico.hdf5")
         cfg_data = ModelConfig(h5_path=H5_PATH)
         loader = GaitDatasetLoader(cfg_data)
         
@@ -449,11 +448,11 @@ if __name__ == "__main__":
         print("\n# METRICAS DETALLADAS - MODELO HIBRIDO")
         print(f"  - ROC AUC SCORE: {auc_score_h:.4f}")
         print("-" * 40)
-        print(classification_report(y_true_h, y_pred_h, target_names=['Nomarcha', 'Marcha']))
+        print(classification_report(y_true_h, y_pred_h, target_names=['NO MARCHA', 'MARCHA']))
         
         plt.figure(figsize=(8, 6))
         cm_h = confusion_matrix(y_true_h, y_pred_h)
-        sns.heatmap(cm_h, annot=True, fmt='d', cmap='Greens', xticklabels=['Nomarcha', 'Marcha'], yticklabels=['Nomarcha', 'Marcha'])
+        sns.heatmap(cm_h, annot=True, fmt='d', cmap='Greens', xticklabels=['NO MARCHA', 'MARCHA'], yticklabels=['NO MARCHA', 'MARCHA'])
         plt.title(f'MATRIZ CONFUSION - MODELO HIBRIDO\nAUC: {auc_score_h:.4f}')
         plt.show()
 

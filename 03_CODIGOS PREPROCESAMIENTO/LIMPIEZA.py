@@ -115,8 +115,8 @@ class GaitDataArchiver:
 
 # EJECUTAR
 if __name__ == "__main__":
-    INPUT = r"C:\Users\jairi\OneDrive\Escritorio\TFM\CODIGOS EXTRACCION\DATOS_PARQUET_CRUDOS\PARQUETS"
-    OUTPUT = Path(r"C:\Users\jairi\OneDrive\Escritorio\TFM\DATASET_LISTO")
+    INPUT = r"C:\Users\jairi\OneDrive\Escritorio\TFM\01_EXTRACCION DE DATOS\resultadosprueba"
+    OUTPUT = Path(r"C:\Users\jairi\OneDrive\Escritorio\TFM\DATASET_LISTO2")
 
     cfg = PreprocessConfig(input_path=INPUT, output_path=OUTPUT)
     archiver = GaitDataArchiver(cfg)

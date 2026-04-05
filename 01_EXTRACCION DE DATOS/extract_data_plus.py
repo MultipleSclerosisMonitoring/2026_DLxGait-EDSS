@@ -575,9 +575,9 @@ def process_interval(
     fs = int(params["freq_psd_hz"])     # 20 Hz
     f0 = float(params["f_start_hz"])
     f1 = float(params["f_stop_hz"])
-    df_hz = float(params["fact_hz"])  # 3 => 20*3 = 60
+    df_hz = float(params["f_step_hz"])
 
-    n_per_seg_nom = nperseg(fs, df_hz) # 3 => 20*3 = 60
+    n_per_seg_nom = int(round(fs * float(params["fact_hz"])))
     n_overlap_nom = int(n_per_seg_nom * float(params["window_overlap"]))
 
     # Umbral por defecto: una ventana completa
@@ -674,6 +674,9 @@ def cli() -> None:  # noqa: C901 – keep flat for clarity
         sys.exit("Excel must include a 'Reference' column when backend=influxdbms")
 
     Path(params['io']['out']).mkdir(parents=True, exist_ok=True)
+    
+    if args.output is None:
+        args.output = Path(params['io']['out'])
 
     # ---------------- backend init ---------- #
     client = None
