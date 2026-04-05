@@ -181,7 +181,7 @@ class GaitEvaluator:
                 outputs = self.model(x_batch)
                 
                 preds = torch.argmax(outputs, dim=1)
-                # OBTENER PROBABILIDADES PARA LA CLASE POSITIVA (EM) PARA EL AUC
+                # OBTENER PROBABILIDADES PARA LA CLASE POSITIVA (MARCHA) PARA EL AUC
                 probs = torch.softmax(outputs, dim=1)[:, 1]
                 
                 y_true.extend(y_batch.numpy())
@@ -193,11 +193,11 @@ class GaitEvaluator:
         print(f"\n# METRICAS DETALLADAS - {title}")
         print(f"  - ROC AUC SCORE: {auc_score:.4f}")
         print("-" * 40)
-        print(classification_report(y_true, y_pred, target_names=['Control', 'EM']))
+        print(classification_report(y_true, y_pred, target_names=['Nomarcha', 'Marcha']))
 
         cm = confusion_matrix(y_true, y_pred)
         plt.figure(figsize=(8, 6))
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['Control', 'EM'], yticklabels=['Control', 'EM'])
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['Nomarcha', 'Marcha'], yticklabels=['Nomarcha', 'Marcha'])
         plt.title(f'MATRIZ CONFUSION - {title}\nAUC: {auc_score:.4f}')
         plt.xlabel('PREDICHO')
         plt.ylabel('REAL')
@@ -340,12 +340,12 @@ if __name__ == "__main__":
         x_train, x_val, x_test, y_train, y_val, y_test = loader.get_train_test_data()
         t_cfg = TrainConfig() 
 
-        num_control = np.sum(y_train == 0)
-        num_em = np.sum(y_train == 1)
+        num_nomarcha = np.sum(y_train == 0)
+        num_marcha = np.sum(y_train == 1)
         total_samples = len(y_train)
-        weight_control = total_samples / (2.0 * num_control) if num_control > 0 else 1.0
-        weight_em = total_samples / (2.0 * num_em) if num_em > 0 else 1.0
-        class_weights = torch.tensor([weight_control, weight_em], dtype=torch.float32).to(t_cfg.device)
+        weight_nomarcha = total_samples / (2.0 * num_nomarcha) if num_nomarcha > 0 else 1.0
+        weight_marcha = total_samples / (2.0 * num_marcha) if num_marcha > 0 else 1.0
+        class_weights = torch.tensor([weight_nomarcha, weight_marcha], dtype=torch.float32).to(t_cfg.device)
 
         print("\n" + "="*40)
         print("# DISTRIBUCION (TRAIN / VAL / TEST)")
@@ -449,11 +449,11 @@ if __name__ == "__main__":
         print("\n# METRICAS DETALLADAS - MODELO HIBRIDO")
         print(f"  - ROC AUC SCORE: {auc_score_h:.4f}")
         print("-" * 40)
-        print(classification_report(y_true_h, y_pred_h, target_names=['Control', 'EM']))
+        print(classification_report(y_true_h, y_pred_h, target_names=['Nomarcha', 'Marcha']))
         
         plt.figure(figsize=(8, 6))
         cm_h = confusion_matrix(y_true_h, y_pred_h)
-        sns.heatmap(cm_h, annot=True, fmt='d', cmap='Greens', xticklabels=['Control', 'EM'], yticklabels=['Control', 'EM'])
+        sns.heatmap(cm_h, annot=True, fmt='d', cmap='Greens', xticklabels=['Nomarcha', 'Marcha'], yticklabels=['Nomarcha', 'Marcha'])
         plt.title(f'MATRIZ CONFUSION - MODELO HIBRIDO\nAUC: {auc_score_h:.4f}')
         plt.show()
 
