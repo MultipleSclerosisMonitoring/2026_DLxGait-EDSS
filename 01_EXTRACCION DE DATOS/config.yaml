@@ -1,18 +1,17 @@
 influxdb:
   bucket: "Gait/autogen"
   org: "UPM"
-  token: "Zx2jR8PD6h3YlS7HVsY5Han1SzF_iz7uk8n5z9BYRZ5q50lk8r1L18N-nFZiGCa57oowLgl8656pVpCig-GANg=="
-  url: "https://138.100.82.178:8086/"
+  token: "PON_TU_TOKEN_AQUI"
+  url: "https://TU_IP_O_LOCALHOST:8086/"
 
-# Estos parámetros son necesarios para el cálculo de Welch y corrección de deriva
 params:
-  freq_target_hz: 75       # Frecuencia a la que interpolaremos
-  freq_psd_hz: 20          # Frecuencia máxima para el análisis
-  f_start_hz: 0.0
-  f_stop_hz: 10.0
-  f_step_hz: 0.05
-  window_overlap: 0.90     # Solapamiento para ventanas de análisis
-  fact_hz: 3.0             # Factor de corrección
+  freq_target_hz: 75       # FRECUENCIA DE INTERPOLACIÓN
+  freq_psd_hz: 20          # FRECUENCIA MÁXIMA PSD
+  f_start_hz: 0.0          # INICIO DEL RANGO
+  f_stop_hz: 7           # FIN DEL RANGO (AJUSTADO PARA 29 BINS)
+  f_step_hz: 0.25          # RESOLUCIÓN (AJUSTADO PARA 29 BINS)
+  window_overlap: 0.90     # SOLAPAMIENTO DE VENTANAS
+  fact_hz: 4.0            # FACTOR PARA VENTANA DE 56 PUNTOS
 
 Location:
   proj: 'utm'
@@ -26,5 +25,5 @@ Display:
   mode: 'Screen'
 
 io:
-  excel: "solicitud.xlsx"   # Nombre de tu lista de la compra
-  out: "resultados"         # Carpeta donde se guardarán los parquets
+  excel: "solicitud.xlsx"   # ARCHIVO DE ENTRADA
+  out: "resultados"         # CARPETA DE SALIDA
