@@ -4,12 +4,14 @@ import pandas as pd
 from pathlib import Path
 from typing import List, Tuple
 from pydantic import BaseModel, DirectoryPath
-from scipy import signal # AGREGADO PARA INTERPOLACION
+from scipy import signal
+import random # AÑADIDO PARA BALANCEO ALEATORIO
 
 # CONFIGURACION
 class PreprocessConfig(BaseModel):
     input_path: DirectoryPath
     output_path: Path
+    excel_path: Path # AÑADIDO PARA RASTREAR LA IDENTIDAD
     fixed_length: int = 100
     step_size: int = 75  # SALTO PARA SOLAPAMIENTO DEL 25%
     min_records: int = 10
@@ -17,11 +19,20 @@ class PreprocessConfig(BaseModel):
 class GaitDataArchiver:
     """
     Clase para generar un archivo HDF5 balanceado con resampling.
+    MODIFICADO: Corrección de Data Leakage (Patient ID) y balanceo aleatorio.
     """
 
     def __init__(self, config: PreprocessConfig):
         self.config = config
         self.output_file = config.output_path / "dataset_jerarquico.hdf5"
+        self._load_patient_map()
+
+    def _load_patient_map(self):
+        """Lee el Excel y mapea segment_XXX -> ID del paciente"""
+        df = pd.read_excel(self.config.excel_path, sheet_name=0)
+        df.rename(columns={col: col.lower() for col in df.columns}, inplace=True)
+        # Asegurar que los IDs son strings limpios
+        self.patient_map = {f"segment_{i:03d}": str(ref).strip() for i, ref in enumerate(df["reference"])}
 
     def run_pipeline(self) -> None:
         """
@@ -41,26 +52,32 @@ class GaitDataArchiver:
         limit = min(len(storage[0]), len(storage[1]))
         
         if limit == 0:
-            print("# ERROR NO DATOS")
+            print("# ERROR: NO HAY DATOS SUFICIENTES PARA BALANCEAR")
             return
 
-        # 3 GUARDAR EN HDF5 
+        # 3 BALANCEO ALEATORIO (PUNTO 10 DEL PROFESOR)
+        # En lugar de recortar secuencialmente, mezclamos aleatoriamente antes de recortar
+        random.seed(42) # Semilla para reproducibilidad
+        random.shuffle(storage[0])
+        random.shuffle(storage[1])
+
+        # 4 GUARDAR EN HDF5 
         self.config.output_path.mkdir(parents=True, exist_ok=True)
         with h5py.File(self.output_file, "w") as hf:
-            print(f"# LIMITE {limit}")
+            print(f"# LIMITE CALCULADO PARA BALANCEO: {limit} muestras por clase")
             
             for label in [0, 1]:
-                # BALANCEO DE CLASES
+                # Ahora coge los primeros 'limit', pero como ya están mezclados, es una muestra representativa
                 for data, path_str, lbl in storage[label][:limit]:
                     ds = hf.create_dataset(path_str, data=data, compression="gzip")
                     ds.attrs["label"] = lbl
         
-        print(f"# ARCHIVO BALANCEADO {self.output_file}")
-        print(f"# TOTAL {limit * 2}")
+        print(f"# ARCHIVO BALANCEADO Y PROTEGIDO: {self.output_file}")
+        print(f"# TOTAL VENTANAS: {limit * 2}")
 
     def _generate_chunks_metadata(self, file_path: Path) -> List[Tuple[np.ndarray, str, int]]:
         """
-        Genera metadatos y ventanas para un archivo especifico.
+        Genera metadatos y ventanas para un archivo especifico preservando la identidad.
 
         :param file_path: Ruta del archivo parquet.
         :return: Lista de tuplas (data, path, label).
@@ -70,18 +87,22 @@ class GaitDataArchiver:
             data_values = df.values
             num_records = len(data_values)
             
+            # Extraer información del nombre del archivo (ej. segment_000_tensor-1.parquet)
             parts = file_path.stem.split("_")
-            seg_id = parts[1]
-            foot_info = parts[2].split("-")
-            pie = foot_info[0]
+            seg_name = f"{parts[0]}_{parts[1]}" # "segment_000"
+            foot_info = parts[2].split("-") # ["tensor", "1"]
             label = int(foot_info[1])
+            
+            # RECUPERAR IDENTIDAD REAL DEL PACIENTE (PUNTO 3 DEL PROFESOR)
+            paciente_id = self.patient_map.get(seg_name, "PACIENTE_DESCONOCIDO")
 
             chunks_list = []
 
             # SEÑAL CORTA: RESAMPLING (INTERPOLACION)
             if num_records < self.config.fixed_length:
                 data = self._fix_length(data_values)
-                path = f"REF_PACIENTE/SEG_{seg_id}_CH_000/{pie}"
+                # SE GUARDA BAJO EL NOMBRE DEL PACIENTE REAL
+                path = f"{paciente_id}/{seg_name}_CH_000/Both"
                 chunks_list.append((data, path, label))
                 return chunks_list
 
@@ -92,7 +113,8 @@ class GaitDataArchiver:
 
             for start in range(0, num_records - target + 1, step):
                 chunk_data = data_values[start : start + target, :]
-                path = f"REF_PACIENTE/SEG_{seg_id}_CH_{idx:03d}/{pie}"
+                # SE GUARDA BAJO EL NOMBRE DEL PACIENTE REAL
+                path = f"{paciente_id}/{seg_name}_CH_{idx:03d}/Both"
                 chunks_list.append((chunk_data, path, label))
                 idx += 1
 
@@ -105,19 +127,17 @@ class GaitDataArchiver:
     def _fix_length(self, data: np.ndarray) -> np.ndarray:
         """
         Ajusta la longitud mediante interpolacion (resampling).
-
-        :param data: Array original.
-        :return: Array interpolado a longitud fija.
         """
         target = self.config.fixed_length
-        # INTERPOLACION MEDIANTE FOURIER (SCIPY)
         return signal.resample(data, target, axis=0)
 
 # EJECUTAR
 if __name__ == "__main__":
-    INPUT = r"C:\Users\jairi\OneDrive\Escritorio\TFM\01_EXTRACCION DE DATOS\resultadosprueba"
-    OUTPUT = Path(r"C:\Users\jairi\OneDrive\Escritorio\TFM\DATASET_LISTO2")
+    # RUTAS (Puedes ajustarlas a tu entorno)
+    INPUT = r"C:\Users\jairi\OneDrive\Escritorio\TFM\01_EXTRACCION DE DATOS\resultados"
+    OUTPUT = Path(r"C:\Users\jairi\OneDrive\Escritorio\TFM\DATASET_LISTONUEVO")
+    EXCEL_REF = Path(r"C:\Users\jairi\OneDrive\Escritorio\TFM\01_EXTRACCION DE DATOS\solicitud.xlsx")
 
-    cfg = PreprocessConfig(input_path=INPUT, output_path=OUTPUT)
+    cfg = PreprocessConfig(input_path=INPUT, output_path=OUTPUT, excel_path=EXCEL_REF)
     archiver = GaitDataArchiver(cfg)
     archiver.run_pipeline()

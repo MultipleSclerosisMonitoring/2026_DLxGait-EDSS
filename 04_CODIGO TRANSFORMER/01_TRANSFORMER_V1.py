@@ -331,7 +331,7 @@ def run_fft_stress_test(x_all: np.ndarray, y_all: np.ndarray, groups_all: np.nda
 if __name__ == "__main__":
 
     try:
-        H5_PATH = Path(r"C:\Users\jairi\OneDrive\Escritorio\TFM\03_CODIGOS PREPROCESAMIENTO\DATASET_LISTO\dataset_jerarquico.hdf5")
+        H5_PATH = Path(r"C:\Users\jairi\OneDrive\Escritorio\TFM\DATASET_LISTONUEVO\dataset_jerarquico.hdf5")
         cfg_data = ModelConfig(h5_path=H5_PATH)
         loader = GaitDatasetLoader(cfg_data)
         
