@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""extract_data_plus.py
+"""
+extract_data_plus.py
 =================================
 Enhanced end‑to‑end pipeline to extract dual‑foot sensor data from InfluxDB.
 MODIFICADO: Corrección de Data Leakage, unificación de timebase y CLI bugs.
@@ -36,7 +37,24 @@ except ImportError:
 def uniform_timebase(df: pd.DataFrame, freq_hz: float, *, method: str = "time", 
                      agg: str = "mean", enforce_unique_index: bool = True,
                      target_idx_override: Optional[pd.DatetimeIndex] = None) -> pd.DataFrame:
-    """Interpola un DataFrame a una malla temporal uniforme sin perder datos."""
+    """
+    Interpola un DataFrame a una malla temporal uniforme sin perder datos.
+
+    :param df: DataFrame original con índice temporal.
+    :type df: pd.DataFrame
+    :param freq_hz: Frecuencia objetivo en Hercios.
+    :type freq_hz: float
+    :param method: Método de interpolación de Pandas.
+    :type method: str
+    :param agg: Método de agregación para índices duplicados.
+    :type agg: str
+    :param enforce_unique_index: Booleano para forzar índices únicos.
+    :type enforce_unique_index: bool
+    :param target_idx_override: Índice temporal personalizado opcional.
+    :type target_idx_override: Optional[pd.DatetimeIndex]
+    :return: DataFrame interpolado a la frecuencia exacta.
+    :rtype: pd.DataFrame
+    """
     if df.shape[0] == 0:
         return df
 
@@ -61,7 +79,18 @@ def uniform_timebase(df: pd.DataFrame, freq_hz: float, *, method: str = "time",
 
 
 class cInfluxDB:
+    """
+    Cliente personalizado para la conexión y extracción de datos desde InfluxDB.
+    """
     def __init__(self, config_path: str, timeout: int = 500_000):
+        """
+        Inicializa la conexión con InfluxDB leyendo credenciales desde YAML.
+
+        :param config_path: Ruta al archivo .config.yaml
+        :type config_path: str
+        :param timeout: Tiempo máximo de espera en milisegundos.
+        :type timeout: int
+        """
         with open(config_path, 'r') as file:
             config = yaml.safe_load(file)
 
@@ -76,6 +105,22 @@ class cInfluxDB:
         self.measurement = self.bucket.split("/")[0] if '/' in self.bucket else self.bucket
     
     def query_data(self, from_date: datetime, to_date: datetime, qtok: str, pie: str, metrics=None) -> pd.DataFrame:
+        """
+        Realiza una consulta a la base de datos filtrando estrictamente por paciente y pie.
+
+        :param from_date: Fecha de inicio de la ventana temporal.
+        :type from_date: datetime
+        :param to_date: Fecha de fin de la ventana temporal.
+        :type to_date: datetime
+        :param qtok: ID de referencia del paciente (CodeID) para evitar fugas.
+        :type qtok: str
+        :param pie: Identificador del sensor ("Left" o "Right").
+        :type pie: str
+        :param metrics: Lista de canales a extraer.
+        :type metrics: list
+        :return: DataFrame con la señal biomecánica bruta.
+        :rtype: pd.DataFrame
+        """
         if to_date <= from_date:
             return pd.DataFrame() 
         
@@ -119,6 +164,24 @@ class cInfluxDB:
 
     def query_with_aggregate_window(self, from_date: datetime, to_date: datetime, window_size: str = "20ms", 
                                     qtok: str = None, pie: str = None, metrics=None) -> pd.DataFrame:
+        """
+        Realiza una consulta agregando datos en ventanas temporales para aligerar la carga.
+
+        :param from_date: Fecha inicio.
+        :type from_date: datetime
+        :param to_date: Fecha fin.
+        :type to_date: datetime
+        :param window_size: Tamaño de la ventana de agregación (ej. '20ms').
+        :type window_size: str
+        :param qtok: ID de referencia del paciente (CodeID).
+        :type qtok: str
+        :param pie: Identificador del pie.
+        :type pie: str
+        :param metrics: Canales a extraer.
+        :type metrics: list
+        :return: DataFrame agregado.
+        :rtype: pd.DataFrame
+        """
         if not qtok or not pie:
             raise ValueError("Los argumentos 'qtok' y 'pie' son obligatorios.")
 
@@ -171,6 +234,7 @@ class cInfluxDB:
         return df.sort_values(by="_time", ascending=False).reset_index(drop=True)
 
     def close(self):
+        """Cierra la conexión con el cliente de InfluxDB."""
         self.client.close()        
 
 HAS_INFLUXDBMS = True
@@ -198,12 +262,14 @@ FEET: Tuple[str, str] = ("Left", "Right")
 ###############################################################################
 
 def load_param_config(path: Optional[Path]) -> Dict[str, object]:
+    """Carga configuración base desde archivo YAML."""
     if path is None: return {}
     if yaml is None: raise RuntimeError("PyYAML is required")
     with open(path, "r", encoding="utf-8") as fh:
         return yaml.safe_load(fh) or {}
 
 def merge_params(cli_ns: argparse.Namespace, cfg: Dict[str, object]) -> Dict[str, object]:
+    """Combina parámetros de línea de comandos con el diccionario YAML."""
     params = {}
     params.update(cfg)
     if 'params' not in params:
@@ -215,9 +281,11 @@ def merge_params(cli_ns: argparse.Namespace, cfg: Dict[str, object]) -> Dict[str
     return params
 
 def nperseg(freq_target_hz: int, f_step_hz: float) -> int:
+    """Calcula número de puntos por segmento para la FFT."""
     return int(round(freq_target_hz * f_step_hz))
 
 def read_time_windows(excel_path: Path) -> pd.DataFrame:
+    """Lee y estandariza los metadatos de las ventanas temporales desde Excel."""
     df = pd.read_excel(excel_path, sheet_name=0)
     df.rename(columns={col: col.lower() for col in df.columns}, inplace=True)
     
@@ -235,12 +303,18 @@ def read_time_windows(excel_path: Path) -> pd.DataFrame:
     return df
 
 def magnitude(df: pd.DataFrame, cols: List[str]) -> pd.Series:
+    """Calcula la magnitud euclidiana combinada de ejes (X,Y,Z)."""
     return np.sqrt((df[cols].astype(float) ** 2).sum(axis=1))
 
 def compute_psd_spectrogram(
     series: pd.Series,fhz:int, fs_hz: int,n_per_seg: int,n_overlap: int,
     f_start_hz: float,f_stop_hz: float,) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Calcula la Densidad Espectral de Potencia (PSD) mediante FFT y ventanas de Hamming.
     
+    :return: Frecuencias, Tiempo y matriz de densidad normalizada.
+    :rtype: Tuple[np.ndarray, np.ndarray, np.ndarray]
+    """
     f, t, Sxx = signal.spectrogram(
         series.astype(float).values, fs=fs_hz, window="hamming",
         nperseg=n_per_seg, noverlap=n_overlap, detrend=False,
@@ -260,12 +334,14 @@ def compute_psd_spectrogram(
     return f[mask], t*fs_hz/fhz, scaled_psd[mask]
 
 def stack_features(specs: Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray]]) -> Tuple[np.ndarray, np.ndarray]:
+    """Apila las características espectrales en un tensor combinado."""
     order = ["acc_mag", "gyro_mag", "S0", "S1", "S2"]
     imgs = [specs[k][2] for k in order]
     stacked = np.vstack(imgs)
     return stacked, specs[order[0]][1], specs[order[0]][0] 
 
 def save_pgm(img: np.ndarray, out_path: Path) -> None:
+    """Guarda matriz en formato PGM (escala de grises)."""
     imwrite(out_path, img)
     
 ###############################################################################
@@ -275,7 +351,10 @@ def save_pgm(img: np.ndarray, out_path: Path) -> None:
 def query_segment_influxdb_client(
     client: InfluxDBClient, bucket: str, measurement: str,
     foot: str, start: datetime, stop: datetime, qtok: str) -> pd.DataFrame:
-    """MODIFICADO: Se añade el filtrado estricto por qtok (CodeID) para evitar fugas."""
+    """
+    Extrae segmentos mediante el cliente oficial de InfluxDB.
+    MODIFICADO: Se añade el filtrado estricto por qtok (CodeID) para evitar fugas.
+    """
     
     fields = (SENSOR_FIELDS_INFLUXDB_CLIENT["acc"] + 
               SENSOR_FIELDS_INFLUXDB_CLIENT["gyro"] + 
@@ -309,6 +388,7 @@ from(bucket: "{bucket}")
     return df
 
 def query_segment_influxdbms(db: cInfluxDB,start: datetime, stop: datetime,qtok: str,foot: str) -> pd.DataFrame:
+    """Extrae segmentos mediante el cliente personalizado cInfluxDB."""
     metrics = list(SENSOR_FIELDS_INFLUXDBMS.keys())
     raw = db.query_data(start, stop, qtok=qtok, pie=foot, metrics=metrics)
     if raw.shape[0] == 0:
@@ -326,6 +406,14 @@ def process_interval(
         data: Dict[str, pd.DataFrame], params: Dict[str, object], lfeat: List[str] , *,
         min_samples: int | None = None, drop_short: bool = False,
     ) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+    """
+    Procesa un intervalo temporal aplicando espectrogramas por característica sensórica.
+    
+    :param data: Datos brutos agrupados por pie.
+    :param params: Configuración de frecuencias y ventanas.
+    :param lfeat: Lista de características a procesar.
+    :return: Diccionario con matrices apiladas por pie.
+    """
     
     fhz= int(params["freq_target_hz"])  
     fs = int(params["freq_psd_hz"])     
@@ -377,6 +465,10 @@ def process_interval(
 
 
 def cli() -> None: 
+    """
+    Punto de entrada de línea de comandos. Instancia el parser, 
+    gestiona la base de datos e itera sobre los segmentos del Excel.
+    """
     parser = argparse.ArgumentParser(
         description="Dual‑foot data extractor with backend‑agnostic InfluxDB support",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter )
