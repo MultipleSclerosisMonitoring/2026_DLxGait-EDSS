@@ -1,117 +1,41 @@
-# FASE 1: PIPELINE DE DETECCIÓN DE MARCHA CON TRANSFORMERS
+# Detección de Marcha en pacientes con Esclerosis Múltiple mediante Deep Learning
 
-Este repositorio contiene el flujo de trabajo completo para el modelo de clasificación de la marcha.
-
-* **Extracción y Limpieza:** Procesamiento de datos crudos procedentes de sensores inerciales y estructuración en formato HDF5.
-* **Ingeniería de Características:** Transformación de ventanas temporales y extracción de la Densidad Espectral de Potencia (PSD) mediante FFT
-* **Entrenamiento de Modelos** 
-
-Tras la fase de experimentación, el **modelo basado exclusivamente en el dominio de la frecuencia (FFT)** demostró el rendimiento más robusto (Accuracy > 96% y alta invarianza a la amplitud). 
+Este repositorio contiene el pipeline completo de ingeniería de datos y Deep Learning para la detección continua de marcha (Gait) en pacientes con Esclerosis Múltiple, utilizando datos biomecánicos extraídos en crudo.
 
 ---
 
-## MODELO FFT
+## Mejoras 
 
-Los archivos `modelo_frecuencia.pth` (pesos) y `scaler_gait.joblib` (parámetros de estandarización) deberian estar en la misma ruta que el script de evaluación.
+1. **Data Leakage (Identidad Preservada):** El sistema de preprocesamiento mapea los segmentos con el ID del paciente. La validación cruzada utiliza `StratifiedGroupKFold` para aislar pacientes, asegurando que el modelo se evalúa frente a sujetos *nunca antes vistos* en entrenamiento.
+2. **Eliminación del Sesgo de Muestreo:** Se ha implementado un balanceo aleatorio de clases (`random.shuffle`) antes de la selección, garantizando la representación de todos los pacientes en el dataset final.
+3. **Inferencia Continua (Sliding Window):** Transición de inferencia estática a un motor dinámico (`inferencia_sliding.py`) capaz de leer secuencias ininterrumpidas, aplicar ventanas deslizantes con solapamiento, y detectar el milisegundo exacto de transición entre Reposo y Marcha.
+4. **Portabilidad:** Rresolución dinámica con `pathlib`.
+5. **Documentación Sphinx:** Implementación de docstrings estándar (PEP 257) en todas las clases y métodos principales.
 
-```bash
-pip install torch numpy joblib scipy pydantic h5py scikit-learn
-```python
-import torch
-import torch.nn as nn
-import numpy as np
-import joblib
-import h5py
-from scipy.fft import rfft
-from pydantic import BaseModel
-from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
+---
 
-# CONFIGURAR RUTAS LOCALES
-class ModelConfig(BaseModel):
-    ruta_modelo: str = "modelo_frecuencia.pth"
-    ruta_scaler: str = "scaler_gait.joblib"
-    input_dim: int = 51 * 290
+## Estructura del Proyecto y Ejecución
 
-# DEFINIR MODELO FFT
-class FFTModel(nn.Module):
-    def __init__(self, input_dim: int):
-        super().__init__()
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(input_dim, 256),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Linear(128, 2)
-        )
+El pipeline está diseñado para ejecutarse secuencialmente:
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.classifier(x)
+### 1. Extracción de Datos
+* **Script:** `01_EXTRACCION DE DATOS/extract_data_plus.py`
+* **Descripción:** Conecta con la base de datos (InfluxDB) usando los parámetros del `.config.yaml` (credenciales ocultas) y el excel de solicitudes, generando archivos `.parquet` en bruto.
 
-# CLASE DE INFERENCIA
-class GaitPredictor:
-    """Clase para evaluar modelo FFT."""
-    
-    def __init__(self, cfg: ModelConfig):
-        self.cfg = cfg
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.scaler = joblib.load(cfg.ruta_scaler)
-        self.model = FFTModel(cfg.input_dim).to(self.device)
-        self.model.load_state_dict(torch.load(cfg.ruta_modelo, map_location=self.device))
-        self.model.eval()
+### 2. Preprocesamiento, Resampling y Balanceo
+* **Script:** `03_CODIGOS PREPROCESAMIENTO/LIMPIEZA.py`
+* **Descripción:** Procesa los archivos `.parquet`, extrae la identidad del paciente, aplica interpolación para señales cortas y empaqueta todo en un archivo jerárquico `dataset_jerarquico.hdf5` libre de fugas de datos.
 
-    def predict(self, x_raw: np.ndarray) -> np.ndarray:
-        """
-        Genera predicciones sobre datos.
-        
-        :param x_raw: Array numpy (N, 100, 290).
-        :return: Array predicciones (0 o 1).
-        """
-        # ESCALAR DATOS
-        n, t, d = x_raw.shape
-        x_flat = x_raw.reshape(-1, d)
-        x_scaled = self.scaler.transform(x_flat).reshape(n, t, d)
-        
-        # APLICAR TRANSFORMADA
-        x_f = (np.abs(rfft(x_scaled, axis=1)) / t).astype(np.float32)
-        x_tensor = torch.from_numpy(x_f).to(self.device)
+### 3. Entrenamiento Híbrido (Stress Test)
+* **Script:** `04_CODIGO TRANSFORMER/01_TRANSFORMER_V1.py`
+* **Descripción:** Entrena tres arquitecturas:
+  - *Transformer (Dominio del Tiempo)*
+  - *MLP sobre Transformada de Fourier (FFT)*
+  - *Modelo Híbrido (Fusión Tiempo + Frecuencia)*
+* Finaliza con un Stress Test (Validación Cruzada por Grupos de 5 Folds) para certificar la generalización del modelo FFT (>98% AUC).
 
-        # PREDECIR CLASES
-        with torch.no_grad():
-            logits = self.model(x_tensor)
-            return logits.argmax(dim=1).cpu().numpy()
+### 4. Monitorización Temporal (Inferencia)
+* **Script:** `04_INFERENCIA/inferencia_sliding.py`
+* **Descripción:** Carga los pesos del modelo (`.pth`) y el escalador, procesando una secuencia ininterrumpida de movimientos y mostrando la transición temporal en la consola mediante ventanas deslizantes.
 
-# EJECUTAR SCRIPT
-if __name__ == "__main__":
-    # INICIALIZAR CONFIGURACION
-    cfg = ModelConfig()
-    predictor = GaitPredictor(cfg)
-    
-    # CARGAR DATOS HDF5
-    ruta_h5 = "dataset_jerarquico.hdf5"
-    x_list, y_list = [], []
-    
-    with h5py.File(ruta_h5, "r") as hf:
-        for p in hf.keys():
-            for s in hf[p].keys():
-                for pie in hf[p][s].keys():
-                    ds = hf[p][s][pie]
-                    x_list.append(ds[:])
-                    y_list.append(ds.attrs["label"])
-                    
-    # CONVERTIR A NUMPY
-    X_test = np.array(x_list).astype(np.float32)
-    y_true = np.array(y_list).astype(np.int64)
-    
-    # GENERAR PREDICCIONES
-    y_pred = predictor.predict(X_test)
-    
-    # IMPRIMIR METRICAS FINALES
-    print("\n# RESULTADOS DE EVALUACION")
-    print("-" * 30)
-    print(f"ACCURACY TOTAL: {accuracy_score(y_true, y_pred):.4f}\n")
-    print("# MATRIZ DE CONFUSION")
-    print(confusion_matrix(y_true, y_pred))
-    print("\n# REPORTE DETALLADO")
-    print(classification_report(y_true, y_pred, target_names=["REPOSO", "MARCHA"]))
+---
