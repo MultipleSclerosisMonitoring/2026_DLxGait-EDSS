@@ -6,10 +6,6 @@ influxdb:
 
 params:
   freq_target_hz: 75       # FRECUENCIA DE INTERPOLACIÓN
-  freq_psd_hz: 20          # FRECUENCIA MÁXIMA PSD
-  f_start_hz: 0.0          # INICIO DEL RANGO
-  f_stop_hz: 7           # FIN DEL RANGO (AJUSTADO PARA 29 BINS)
-  f_step_hz: 0.25          # RESOLUCIÓN (AJUSTADO PARA 29 BINS)
   window_overlap: 0.90     # SOLAPAMIENTO DE VENTANAS
   fact_hz: 4.0            # FACTOR PARA VENTANA DE 56 PUNTOS
 
