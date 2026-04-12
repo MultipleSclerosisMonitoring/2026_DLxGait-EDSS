@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Created on Sun Feb 22 15:28:53 2026
-@author: jairi
+Motor de Inferencia Continua basado en Deep Learning para Análisis Biomecánico.
+
+Este módulo implementa una red neuronal en el dominio de la frecuencia (FFT) para procesar 
+secuencias temporales continuas mediante un algoritmo de ventana deslizante (sliding window). 
+Su objetivo es monitorizar y detectar de forma cronológica las transiciones reales entre 
+estados motores (REPOSO y MARCHA), validando la capacidad de respuesta temporal del modelo.
 """
 
 import h5py
@@ -25,17 +29,36 @@ import joblib
 ############################# FASE 1: CARGA Y PREPARACION DE TENSORES
 
 class ModelConfig(BaseModel):
+    """
+    Configuración para la ruta del modelo y proporciones de división de datos.
+    """
     h5_path: FilePath 
     test_size: float = 0.15 # 15% PARA TEST
     val_size: float = 0.15  # 15% PARA VALIDACION 
     random_state: int = 13 
 
 class GaitDatasetLoader:
+    """
+    Clase encargada de cargar, dividir y escalar los datos desde el archivo HDF5.
+    """
     def __init__(self, config: ModelConfig):
+        """
+        Inicializa el cargador con la configuración y el escalador Z-score.
+
+        :param config: Parámetros de configuración del dataset.
+        :type config: ModelConfig
+        """
         self.config = config
         self.scaler = StandardScaler()
 
     def get_train_test_data(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Realiza la carga, división (Train/Val/Test) asegurando la identidad del paciente 
+        y normalización de los datos.
+
+        :return: Tupla con tensores x_train, x_val, x_test, y_train, y_val, y_test.
+        :rtype: Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+        """
         # 1 CARGA DESDE HDF5
         x_raw, groups, labels = self._load_data()
 
@@ -62,6 +85,12 @@ class GaitDatasetLoader:
                 y_train.astype(np.float32), y_val.astype(np.float32), y_test.astype(np.float32))
 
     def _load_data(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Lee internamente el archivo HDF5 iterando por paciente, segmento y pie.
+
+        :return: Tensores de datos (X), grupos de pacientes (groups) y etiquetas (y).
+        :rtype: Tuple[np.ndarray, np.ndarray, np.ndarray]
+        """
         x_list, groups, labels = [], [], []
         with h5py.File(self.config.h5_path, "r") as hf:
             for patient in hf.keys():
@@ -75,6 +104,16 @@ class GaitDatasetLoader:
         return np.array(x_list), np.array(groups), np.array(labels)
 
     def _scale_data(self, data: np.ndarray, fit: bool = False) -> np.ndarray:
+        """
+        Aplica la normalización Standard Scaler a un conjunto de datos tridimensional.
+
+        :param data: Tensor original con forma (muestras, pasos, características).
+        :type data: np.ndarray
+        :param fit: Indica si el escalador debe ajustarse a estos datos (solo en Train).
+        :type fit: bool
+        :return: Tensor normalizado.
+        :rtype: np.ndarray
+        """
         n_samples, n_steps, n_features = data.shape
         flat_data = data.reshape(-1, n_features)
         if fit:
@@ -83,11 +122,20 @@ class GaitDatasetLoader:
         return scaled_flat.reshape(n_samples, n_steps, n_features)
 
     def get_all_raw_data(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Recupera el dataset completo sin procesar para pruebas de estrés.
+
+        :return: Tupla con datos, grupos y etiquetas.
+        :rtype: Tuple[np.ndarray, np.ndarray, np.ndarray]
+        """
         return self._load_data()
 
 ############################## FASE 2: ARQUITECTURA DEL MODELO
 
 class TransformerConfig(BaseModel):
+    """
+    Configuración de los hiperparámetros para la arquitectura Transformer.
+    """
     input_dim: PositiveInt = 290
     model_dim: PositiveInt = 128
     nhead: PositiveInt = 8
@@ -97,7 +145,16 @@ class TransformerConfig(BaseModel):
     max_len: PositiveInt = 100
 
 class GaitTransformer(nn.Module):
+    """
+    Modelo de red neuronal basado en Transformer Encoder para series temporales.
+    """
     def __init__(self, config: TransformerConfig):
+        """
+        Construye la arquitectura base (Embedding, Transformer, Clasificador).
+
+        :param config: Parámetros de arquitectura.
+        :type config: TransformerConfig
+        """
         super(GaitTransformer, self).__init__()
         self.embedding = nn.Linear(config.input_dim, config.model_dim)
         self.pos_embedding = nn.Parameter(torch.zeros(1, config.max_len, config.model_dim))
@@ -113,6 +170,14 @@ class GaitTransformer(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Paso hacia adelante de la red neuronal.
+
+        :param x: Tensor de entrada.
+        :type x: torch.Tensor
+        :return: Predicción sin normalizar (logits).
+        :rtype: torch.Tensor
+        """
         x = self.embedding(x) + self.pos_embedding
         x = self.transformer(x)
         x = x.mean(dim=1)
@@ -121,19 +186,43 @@ class GaitTransformer(nn.Module):
 ############################## FASE 3: ENTRENAMIENTO
 
 class TrainConfig(BaseModel):
+    """
+    Configuración para los bucles de entrenamiento.
+    """
     batch_size: PositiveInt = 32
     epochs: PositiveInt = 50
     lr: confloat(gt=0) = 0.001
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 
 class GaitTrainer:
+    """
+    Motor encargado de optimizar y evaluar los modelos de PyTorch.
+    """
     def __init__(self, model: nn.Module, config: TrainConfig, class_weights: torch.Tensor = None):
+        """
+        Prepara el modelo, función de pérdida y el optimizador Adam.
+
+        :param model: Modelo de PyTorch a entrenar.
+        :type model: nn.Module
+        :param config: Configuración de entrenamiento.
+        :type config: TrainConfig
+        :param class_weights: Pesos opcionales para clases desbalanceadas.
+        :type class_weights: torch.Tensor
+        """
         self.model = model.to(config.device)
         self.config = config
         self.criterion = nn.CrossEntropyLoss(weight=class_weights)
         self.optimizer = optim.Adam(self.model.parameters(), lr=config.lr)
 
     def train(self, train_loader: DataLoader, val_loader: DataLoader) -> None:
+        """
+        Ejecuta el bucle de épocas procesando lotes de datos y actualizando gradientes.
+
+        :param train_loader: Cargador de datos de entrenamiento.
+        :type train_loader: DataLoader
+        :param val_loader: Cargador de datos de validación.
+        :type val_loader: DataLoader
+        """
         print(f"# ENTRENANDO EN {self.config.device.upper()}")
         for epoch in range(self.config.epochs):
             self.model.train()
@@ -152,6 +241,14 @@ class GaitTrainer:
                 print(f"# EPOCA {epoch+1:02d} | LOSS: {total_loss/len(train_loader):.4f} | VAL ACC: {acc:.2%}")
 
     def evaluate(self, loader: DataLoader) -> float:
+        """
+        Evalúa el modelo sobre un conjunto de validación sin actualizar gradientes.
+
+        :param loader: Cargador de datos a evaluar.
+        :type loader: DataLoader
+        :return: Precisión (Accuracy) calculada.
+        :rtype: float
+        """
         self.model.eval()
         correct, total = 0, 0
         with torch.no_grad():
@@ -166,11 +263,30 @@ class GaitTrainer:
 ############################## FASE 4: EVALUACION
 
 class GaitEvaluator:
+    """
+    Clase para el reporte visual y estadístico del rendimiento del modelo.
+    """
     def __init__(self, model: nn.Module, device: str):
+        """
+        Inicializa el evaluador.
+
+        :param model: Modelo entrenado.
+        :type model: nn.Module
+        :param device: Dispositivo (CPU o CUDA).
+        :type device: str
+        """
         self.model = model
         self.device = device
 
     def plot_results(self, loader: DataLoader, title: str = "MODELO"):
+        """
+        Genera el informe de clasificación, curva ROC AUC y dibuja la matriz de confusión.
+
+        :param loader: Datos de evaluación (Test).
+        :type loader: DataLoader
+        :param title: Título identificativo para las gráficas.
+        :type title: str
+        """
         self.model.eval()
         y_true, y_pred, y_prob = [], [], []
 
@@ -205,13 +321,34 @@ class GaitEvaluator:
 ############################## FASE 5: LOGICA DE FRECUENCIA (FFT)
 
 class FFTProcessor:
+    """
+    Procesador de señales para el dominio de la frecuencia.
+    """
     @staticmethod
     def get_fft_features(data: np.ndarray) -> np.ndarray:
+        """
+        Transforma señales temporales al dominio de la frecuencia utilizando 
+        la Transformada Rápida de Fourier (rfft).
+
+        :param data: Datos temporales de entrada.
+        :type data: np.ndarray
+        :return: Magnitudes del espectro de frecuencias normalizadas.
+        :rtype: np.ndarray
+        """
         data_fft = np.abs(rfft(data, axis=1))
         return (data_fft / data.shape[1]).astype(np.float32)
 
 class FFTModel(nn.Module):
+    """
+    Modelo clasificador lineal enfocado exclusivamente en características espectrales.
+    """
     def __init__(self, input_dim: int = 51 * 290):
+        """
+        Define la estructura Perceptrón Multicapa (MLP) del modelo.
+
+        :param input_dim: Dimensión de entrada (frecuencias * canales).
+        :type input_dim: int
+        """
         super(FFTModel, self).__init__()
         self.classifier = nn.Sequential(
             nn.Flatten(),
@@ -224,12 +361,32 @@ class FFTModel(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Inferencia del modelo espectral.
+
+        :param x: Características de frecuencia extraídas.
+        :type x: torch.Tensor
+        :return: Predicciones (logits).
+        :rtype: torch.Tensor
+        """
         return self.classifier(x)
 
 ############################## FASE 6: ARQUITECTURA MODELO HIBRIDO 
 
 class GaitHybridModel(nn.Module):
+    """
+    Modelo unificado que combina representaciones temporales (Transformer) 
+    y frecuenciales (FFT) para clasificación de marcha.
+    """
     def __init__(self, t_cfg: TransformerConfig, pretrained_transformer: nn.Module = None):
+        """
+        Ensambla las ramas y el cabezal de fusión.
+
+        :param t_cfg: Configuración de la rama Transformer.
+        :type t_cfg: TransformerConfig
+        :param pretrained_transformer: Pesos opcionales pre-entrenados para la rama temporal.
+        :type pretrained_transformer: nn.Module
+        """
         super(GaitHybridModel, self).__init__()
         
         self.transformer_branch = GaitTransformer(t_cfg)
@@ -253,6 +410,16 @@ class GaitHybridModel(nn.Module):
         )
 
     def forward(self, x_t: torch.Tensor, x_f: torch.Tensor) -> torch.Tensor:
+        """
+        Propagación mediante ramas paralelas y concatenación de características latentes.
+
+        :param x_t: Tensor en el dominio del tiempo.
+        :type x_t: torch.Tensor
+        :param x_f: Tensor en el dominio de la frecuencia.
+        :type x_f: torch.Tensor
+        :return: Resultado del cabezal de fusión unificado.
+        :rtype: torch.Tensor
+        """
         feat_t = self.transformer_branch(x_t)
         feat_f = self.fft_branch(x_f)
         combined = torch.cat((feat_t, feat_f), dim=1)
@@ -261,15 +428,43 @@ class GaitHybridModel(nn.Module):
 ############################## FASE 7: BLOQUE PRINCIPAL DE EJECUCION
     
 class MultiModalDataset(torch.utils.data.Dataset):
+    """
+    Dataset especializado para entrenar el modelo híbrido suministrando 
+    simultáneamente tiempo y frecuencia.
+    """
     def __init__(self, x_time: np.ndarray, x_fft: np.ndarray, y: np.ndarray):
+        """
+        Carga e inicializa los tensores para tiempo, frecuencia y etiquetas.
+
+        :param x_time: Datos temporales.
+        :type x_time: np.ndarray
+        :param x_fft: Datos frecuenciales.
+        :type x_fft: np.ndarray
+        :param y: Vector de etiquetas reales.
+        :type y: np.ndarray
+        """
         self.x_time = torch.from_numpy(x_time)
         self.x_fft = torch.from_numpy(x_fft)
         self.y = torch.from_numpy(y).long()
 
     def __len__(self) -> int:
+        """
+        Retorna la longitud total del dataset.
+
+        :return: Total de muestras.
+        :rtype: int
+        """
         return len(self.y)
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Obtiene una instancia combinada por índice.
+
+        :param idx: Índice de la muestra solicitada.
+        :type idx: int
+        :return: Tupla con datos temporales, frecuenciales y la etiqueta.
+        :rtype: Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        """
         return self.x_time[idx], self.x_fft[idx], self.y[idx]
 
 ############################## FASE 8: STRESS TEST (ROBUSTEZ FINAL)
@@ -277,6 +472,18 @@ class MultiModalDataset(torch.utils.data.Dataset):
 def run_fft_stress_test(x_all: np.ndarray, y_all: np.ndarray, groups_all: np.ndarray, t_cfg: TrainConfig):
     """
     VALIDACION CRUZADA ESTRATIFICADA PARA ASEGURAR REPRESENTACION DE CLASES POR FOLD.
+    
+    Evalúa empíricamente la estabilidad del modelo de frecuencia frente 
+    a pacientes no observados previamente en entrenamiento.
+
+    :param x_all: Conjunto de datos crudos totales.
+    :type x_all: np.ndarray
+    :param y_all: Etiquetas completas asociadas al dataset.
+    :type y_all: np.ndarray
+    :param groups_all: Identificadores que marcan a qué paciente corresponde cada segmento.
+    :type groups_all: np.ndarray
+    :param t_cfg: Parámetros base de entrenamiento.
+    :type t_cfg: TrainConfig
     """
     # CAMBIAMOS A StratifiedGroupKFold
     sgkf = StratifiedGroupKFold(n_splits=5)

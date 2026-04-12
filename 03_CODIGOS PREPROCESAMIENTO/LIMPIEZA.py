@@ -1,3 +1,11 @@
+# -*- coding: utf-8 -*-
+"""
+Módulo de limpieza y preprocesamiento de datos biomecánicos.
+Convierte archivos Parquet en un archivo HDF5 balanceado, corrigiendo 
+la fuga de datos mediante el mapeo de identidades (Patient ID) y aplicando
+remuestreo (resampling) y balanceo aleatorio.
+"""
+
 import h5py
 import numpy as np
 import pandas as pd
@@ -5,30 +13,42 @@ from pathlib import Path
 from typing import List, Tuple
 from pydantic import BaseModel, DirectoryPath
 from scipy import signal
-import random # AÑADIDO PARA BALANCEO ALEATORIO
+import random 
 
 # CONFIGURACION
 class PreprocessConfig(BaseModel):
+    """
+    Configuración de rutas y parámetros para el preprocesamiento de la señal.
+    """
     input_path: DirectoryPath
     output_path: Path
-    excel_path: Path # AÑADIDO PARA RASTREAR LA IDENTIDAD
+    excel_path: Path 
     fixed_length: int = 100
-    step_size: int = 75  # SALTO PARA SOLAPAMIENTO DEL 25%
+    step_size: int = 75  
     min_records: int = 10
 
 class GaitDataArchiver:
     """
     Clase para generar un archivo HDF5 balanceado con resampling.
-    MODIFICADO: Corrección de Data Leakage (Patient ID) y balanceo aleatorio.
+    Corrección de Data Leakage (Patient ID) y balanceo aleatorio.
     """
 
     def __init__(self, config: PreprocessConfig):
+        """
+        Inicializa el archivador con la configuración y genera el mapa de pacientes.
+
+        :param config: Objeto de configuración con las rutas y tamaños de ventana.
+        :type config: PreprocessConfig
+        """
         self.config = config
         self.output_file = config.output_path / "dataset_jerarquico.hdf5"
         self._load_patient_map()
 
     def _load_patient_map(self):
-        """Lee el Excel y mapea segment_XXX -> ID del paciente"""
+        """
+        Lee el archivo Excel de solicitudes y mapea los identificadores 
+        de segmento al ID real del paciente para evitar fuga de datos.
+        """
         df = pd.read_excel(self.config.excel_path, sheet_name=0)
         df.rename(columns={col: col.lower() for col in df.columns}, inplace=True)
         # Asegurar que los IDs son strings limpios
@@ -36,7 +56,8 @@ class GaitDataArchiver:
 
     def run_pipeline(self) -> None:
         """
-        Ejecuta el flujo completo de procesamiento.
+        Ejecuta el flujo completo de procesamiento: lectura de archivos,
+        extracción de ventanas, balanceo aleatorio de clases y escritura en HDF5.
         """
         # 1 LISTAR ARCHIVOS
         files = list(self.config.input_path.glob("*.parquet"))
@@ -77,10 +98,13 @@ class GaitDataArchiver:
 
     def _generate_chunks_metadata(self, file_path: Path) -> List[Tuple[np.ndarray, str, int]]:
         """
-        Genera metadatos y ventanas para un archivo especifico preservando la identidad.
+        Genera metadatos y divide la señal en ventanas para un archivo especifico,
+        preservando la identidad real del paciente.
 
-        :param file_path: Ruta del archivo parquet.
-        :return: Lista de tuplas (data, path, label).
+        :param file_path: Ruta del archivo parquet a procesar.
+        :type file_path: Path
+        :return: Lista de tuplas que contienen el tensor de datos, la ruta interna HDF5 y la etiqueta.
+        :rtype: List[Tuple[np.ndarray, str, int]]
         """
         try:
             df = pd.read_parquet(file_path).T.dropna()
@@ -126,7 +150,13 @@ class GaitDataArchiver:
 
     def _fix_length(self, data: np.ndarray) -> np.ndarray:
         """
-        Ajusta la longitud mediante interpolacion (resampling).
+        Ajusta la longitud del tensor mediante interpolación (resampling)
+        utilizando la transformada de Fourier.
+
+        :param data: Tensor bidimensional con la señal original.
+        :type data: np.ndarray
+        :return: Tensor bidimensional ajustado a la longitud configurada.
+        :rtype: np.ndarray
         """
         target = self.config.fixed_length
         return signal.resample(data, target, axis=0)
