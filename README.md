@@ -1,4 +1,4 @@
-# Detección Biomecánica de Marcha en Esclerosis Múltiple (TFM)
+# ESTIMACIÓN DE DETERIORO EN ESCLEROSIS MÚLTIPLE FUNCIÓN DEL COMPORTAMIENTO EN TESTS PREESTABLECIDOS
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-ee4c2c.svg)](https://pytorch.org/)
@@ -9,9 +9,9 @@ Este repositorio contiene la arquitectura de extremo a extremo (*end-to-end*) pa
 
 ---
 
-## Arquitectura Machine Learning
+## Arquitectura 
 
-Nuestra arquitectura ha sido migrada a **PyTorch** para garantizar un flujo continuo y evitar el *Data Leakage*. El sistema se divide en tres enfoques modulares:
+La arquitectura ha sido migrada a **PyTorch** para garantizar un flujo continuo y evitar el *Data Leakage*. El sistema se divide en tres enfoques modulares:
 
 1. **Rama Temporal (Transformer Encoder):** 
    * Captura dependencias secuenciales a largo plazo en los datos crudos del giroscopio y acelerómetro.
@@ -62,4 +62,4 @@ El código ha sido refactorizado implementando tipado estricto, logging estructu
 
 - [x] **Fase 1-4**: Pipeline de extracción y clasificación robusta Marcha vs. Reposo.
 - [x] **Refactorización Core**: Implementación de tests unitarios (`pytest`), tipado estricto y POO corporativa.
-- [ ] **Fase 5: Regresor Clínico (EDSS)**: Utilizar los *embeddings* latentes generados por el modelo híbrido como entrada para una red Tabular (TabTransformer/MLP-Mixer) capaz de predecir el grado de discapacidad EDSS, uniendo la marcha con las covariables demográficas y cognitivas de los pacientes.
+- [ ] ** --TENTATIVO-- Fase 5: Regresor Clínico (EDSS)**: Utilizar los *embeddings* latentes generados por el modelo híbrido como entrada para una red Tabular (TabTransformer/MLP-Mixer) capaz de predecir el grado de discapacidad EDSS, uniendo la marcha con las covariables demográficas y cognitivas de los pacientes.
