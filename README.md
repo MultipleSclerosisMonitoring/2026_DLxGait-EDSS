@@ -1,41 +1,75 @@
-# Detección de Marcha en pacientes con Esclerosis Múltiple mediante Deep Learning
+```markdown
+# Detección Biomecánica de Marcha en Esclerosis Múltiple (TFM)
 
-Este repositorio contiene el pipeline completo de ingeniería de datos y Deep Learning para la detección continua de marcha (Gait) en pacientes con Esclerosis Múltiple, utilizando datos biomecánicos extraídos en crudo.
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-ee4c2c.svg)](https://pytorch.org/)
+[![Tests](https://img.shields.io/badge/Tests-Pytest-success.svg)](#)
+[![Code style: PEP8](https://img.shields.io/badge/Code%20Style-PEP8-yellow.svg)](https://pep8.org/)
 
----
-
-## Mejoras 
-
-1. **Data Leakage (Identidad Preservada):** El sistema de preprocesamiento mapea los segmentos con el ID del paciente. La validación cruzada utiliza `StratifiedGroupKFold` para aislar pacientes, asegurando que el modelo se evalúa frente a sujetos *nunca antes vistos* en entrenamiento.
-2. **Eliminación del Sesgo de Muestreo:** Se ha implementado un balanceo aleatorio de clases (`random.shuffle`) antes de la selección, garantizando la representación de todos los pacientes en el dataset final.
-3. **Inferencia Continua (Sliding Window):** Transición de inferencia estática a un motor dinámico (`inferencia_sliding.py`) capaz de leer secuencias ininterrumpidas, aplicar ventanas deslizantes con solapamiento, y detectar el milisegundo exacto de transición entre Reposo y Marcha.
-4. **Portabilidad:** Rresolución dinámica con `pathlib`.
-5. **Documentación Sphinx:** Implementación de docstrings estándar (PEP 257) en todas las clases y métodos principales.
+Este repositorio contiene la arquitectura de extremo a extremo (*end-to-end*) para la extracción, preprocesamiento y modelado de datos biomecánicos obtenidos mediante calcetines inteligentes (SCKS) en pacientes con Esclerosis Múltiple.
 
 ---
 
-## Estructura del Proyecto y Ejecución
+## Arquitectura Machine Learning
 
-El pipeline está diseñado para ejecutarse secuencialmente:
+Nuestra arquitectura ha sido migrada a **PyTorch** para garantizar un flujo continuo y evitar el *Data Leakage*. El sistema se divide en tres enfoques modulares:
 
-### 1. Extracción de Datos
-* **Script:** `01_EXTRACCION DE DATOS/extract_data_plus.py`
-* **Descripción:** Conecta con la base de datos (InfluxDB) usando los parámetros del `.config.yaml` (credenciales ocultas) y el excel de solicitudes, generando archivos `.parquet` en bruto.
+1. **Rama Temporal (Transformer Encoder):** 
+   * Captura dependencias secuenciales a largo plazo en los datos crudos del giroscopio y acelerómetro.
+   * Utiliza *Multi-Head Attention* para identificar patrones anómalos de la marcha en el dominio del tiempo.
+2. **Rama Frecuencial (FFT - Multi-Layer Perceptron):**
+   * Transforma las ventanas temporales mediante la Transformada Rápida de Fourier (RFFT).
+   * Aísla las micro-frecuencias generadas por impactos instantáneos (apoyado en la justificación biomecánica de *Müller et al., 2021*).
+3. **Modelo Híbrido (Early Fusion):**
+   * Concatena los espacios latentes de ambas ramas (Tiempo + Frecuencia) antes del cabezal de clasificación, logrando una inferencia altamente robusta.
 
-### 2. Preprocesamiento, Resampling y Balanceo
-* **Script:** `03_CODIGOS PREPROCESAMIENTO/LIMPIEZA.py`
-* **Descripción:** Procesa los archivos `.parquet`, extrae la identidad del paciente, aplica interpolación para señales cortas y empaqueta todo en un archivo jerárquico `dataset_jerarquico.hdf5` libre de fugas de datos.
-
-### 3. Entrenamiento Híbrido (Stress Test)
-* **Script:** `04_CODIGO TRANSFORMER/01_TRANSFORMER_V1.py`
-* **Descripción:** Entrena tres arquitecturas:
-  - *Transformer (Dominio del Tiempo)*
-  - *MLP sobre Transformada de Fourier (FFT)*
-  - *Modelo Híbrido (Fusión Tiempo + Frecuencia)*
-* Finaliza con un Stress Test (Validación Cruzada por Grupos de 5 Folds) para certificar la generalización del modelo FFT (>98% AUC).
-
-### 4. Monitorización Temporal (Inferencia)
-* **Script:** `04_INFERENCIA/inferencia_sliding.py`
-* **Descripción:** Carga los pesos del modelo (`.pth`) y el escalador, procesando una secuencia ininterrumpida de movimientos y mostrando la transición temporal en la consola mediante ventanas deslizantes.
+*La validación inter-sujeto se garantiza mediante `StratifiedGroupKFold`.*
 
 ---
+
+## Flujo de Ejecución (Quickstart)
+
+El código ha sido refactorizado implementando tipado estricto, logging estructurado y validaciones CLI mediante `argparse` y `Pydantic`.
+
+### 1. Extracción de Datos (InfluxDB)
+```bash
+python "01_EXTRACCION DE DATOS/extract_data_plus.py" --backend influxdbms -c .config.yaml -e solicitud.xlsx -o ./resultados
+```
+
+### 2. Preprocesamiento y Balanceo (Generación HDF5)
+```bash
+python "03_CODIGOS PREPROCESAMIENTO/LIMPIEZA.py" --input ./resultados --output ./DATASET --excel solicitud.xlsx
+```
+
+### 3. Entrenamiento (Deep Learning)
+```bash
+python "04_CODIGO TRANSFORMER/01_TRANSFORMER_V1.py" --dataset ./DATASET/dataset_jerarquico.hdf5 --output ./MODELOS_ENTRENADOS
+```
+
+### 4. Inferencia y Pruebas Ciegas (Sliding Window)
+```bash
+python "04_INFERENCIA/inferencia_sliding.py" --modelo ./MODELOS_ENTRENADOS/modelo_frecuencia.pth --scaler ./MODELOS_ENTRENADOS/scaler_gait.joblib --datos ./resultados/segment_000.parquet
+```
+
+---
+
+## Troubleshooting (Solución de Problemas)
+
+* **`InfluxExtractionError: Configuración faltante`**: 
+  * *Causa:* El archivo `.config.yaml` no se encuentra. Por políticas de seguridad, las credenciales no se suben al repositorio.
+  * *Solución:* Solicita el archivo de configuración al administrador y colócalo en el directorio raíz de extracción.
+* **`extract_data_plus.py: error: the following arguments are required: -e/--excel`**: 
+  * *Causa:* Se está intentando extraer datos sin proveer el mapeo de identidades.
+  * *Solución:* Añade la bandera `-e solicitud.xlsx` al ejecutar por terminal.
+* **`pydantic_core.ValidationError: Path does not point to a directory`**: 
+  * *Causa:* Las rutas pasadas por consola a los scripts de limpieza o inferencia no existen en el disco duro.
+  * *Solución:* Verifica que la carpeta de entrada ha sido creada previamente.
+
+---
+
+## Roadmap (Próximos Pasos)
+
+- [x] **Fase 1-4**: Pipeline de extracción y clasificación robusta Marcha vs. Reposo.
+- [x] **Refactorización Core**: Implementación de tests unitarios (`pytest`), tipado estricto y POO corporativa.
+- [ ] **Fase 5: Regresor Clínico (EDSS)**: Utilizar los *embeddings* latentes generados por el modelo híbrido como entrada para una red Tabular (TabTransformer/MLP-Mixer) capaz de predecir el grado de discapacidad EDSS, uniendo la marcha con las covariables demográficas y cognitivas de los pacientes.
+```
