@@ -1,4 +1,3 @@
-```markdown
 # Detección Biomecánica de Marcha en Esclerosis Múltiple (TFM)
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
@@ -32,24 +31,16 @@ Nuestra arquitectura ha sido migrada a **PyTorch** para garantizar un flujo cont
 El código ha sido refactorizado implementando tipado estricto, logging estructurado y validaciones CLI mediante `argparse` y `Pydantic`.
 
 ### 1. Extracción de Datos (InfluxDB)
-```bash
-python "01_EXTRACCION DE DATOS/extract_data_plus.py" --backend influxdbms -c .config.yaml -e solicitud.xlsx -o ./resultados
-```
+`python "01_EXTRACCION DE DATOS/extract_data_plus.py" --backend influxdbms -c .config.yaml -e solicitud.xlsx -o ./resultados`
 
 ### 2. Preprocesamiento y Balanceo (Generación HDF5)
-```bash
-python "03_CODIGOS PREPROCESAMIENTO/LIMPIEZA.py" --input ./resultados --output ./DATASET --excel solicitud.xlsx
-```
+`python "03_CODIGOS PREPROCESAMIENTO/LIMPIEZA.py" --input ./resultados --output ./DATASET --excel solicitud.xlsx`
 
 ### 3. Entrenamiento (Deep Learning)
-```bash
-python "04_CODIGO TRANSFORMER/01_TRANSFORMER_V1.py" --dataset ./DATASET/dataset_jerarquico.hdf5 --output ./MODELOS_ENTRENADOS
-```
+`python "04_CODIGO TRANSFORMER/01_TRANSFORMER_V1.py" --dataset ./DATASET/dataset_jerarquico.hdf5 --output ./MODELOS_ENTRENADOS`
 
 ### 4. Inferencia y Pruebas Ciegas (Sliding Window)
-```bash
-python "04_INFERENCIA/inferencia_sliding.py" --modelo ./MODELOS_ENTRENADOS/modelo_frecuencia.pth --scaler ./MODELOS_ENTRENADOS/scaler_gait.joblib --datos ./resultados/segment_000.parquet
-```
+`python "04_INFERENCIA/inferencia_sliding.py" --modelo ./MODELOS_ENTRENADOS/modelo_frecuencia.pth --scaler ./MODELOS_ENTRENADOS/scaler_gait.joblib --datos ./resultados/segment_000.parquet`
 
 ---
 
@@ -72,4 +63,3 @@ python "04_INFERENCIA/inferencia_sliding.py" --modelo ./MODELOS_ENTRENADOS/model
 - [x] **Fase 1-4**: Pipeline de extracción y clasificación robusta Marcha vs. Reposo.
 - [x] **Refactorización Core**: Implementación de tests unitarios (`pytest`), tipado estricto y POO corporativa.
 - [ ] **Fase 5: Regresor Clínico (EDSS)**: Utilizar los *embeddings* latentes generados por el modelo híbrido como entrada para una red Tabular (TabTransformer/MLP-Mixer) capaz de predecir el grado de discapacidad EDSS, uniendo la marcha con las covariables demográficas y cognitivas de los pacientes.
-```
