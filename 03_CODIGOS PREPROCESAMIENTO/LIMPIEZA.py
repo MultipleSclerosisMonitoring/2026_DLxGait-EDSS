@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Módulo de limpieza y preprocesamiento de datos biomecánicos.
-Convierte archivos Parquet en un archivo HDF5 balanceado, corrigiendo 
+Convierte archivos Parquet en un archivo HDF5 balanceado, corrigiendo
 la fuga de datos mediante el mapeo de identidades (Patient ID) y aplicando
 remuestreo (resampling) y balanceo aleatorio.
 """
@@ -9,23 +9,38 @@ remuestreo (resampling) y balanceo aleatorio.
 import h5py
 import numpy as np
 import pandas as pd
+import logging
+import argparse
+import random
 from pathlib import Path
-from typing import List, Tuple
-from pydantic import BaseModel, DirectoryPath
+from typing import List, Tuple, Dict
+from pydantic import BaseModel, DirectoryPath, Field
 from scipy import signal
-import random 
 
-# CONFIGURACION
+# CONFIGURAR LOGGING CENTRAL
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+# EXCEPCIONES PERSONALIZADAS
+class PreprocessingError(Exception):
+    """Excepción para errores de preprocesamiento."""
+    pass
+
+# CONFIGURACION PYDANTIC
 class PreprocessConfig(BaseModel):
     """
     Configuración de rutas y parámetros para el preprocesamiento de la señal.
     """
     input_path: DirectoryPath
     output_path: Path
-    excel_path: Path 
-    fixed_length: int = 100
-    step_size: int = 75  
-    min_records: int = 10
+    excel_path: Path
+    fixed_length: int = Field(default=100, gt=0)
+    step_size: int = Field(default=75, gt=0)
+    min_records: int = Field(default=10, gt=0)
+    random_seed: int = Field(default=42, ge=0)
 
 class GaitDataArchiver:
     """
@@ -33,141 +48,158 @@ class GaitDataArchiver:
     Corrección de Data Leakage (Patient ID) y balanceo aleatorio.
     """
 
-    def __init__(self, config: PreprocessConfig):
+    def __init__(self, config: PreprocessConfig) -> None:
         """
-        Inicializa el archivador con la configuración y genera el mapa de pacientes.
+        Inicializa el archivador con la configuración y genera el mapa.
 
-        :param config: Objeto de configuración con las rutas y tamaños de ventana.
+        :param config: Objeto de configuración de preprocesamiento.
         :type config: PreprocessConfig
         """
         self.config = config
-        self.output_file = config.output_path / "dataset_jerarquico.hdf5"
+        self.output_file: Path = config.output_path / "dataset_jerarquico.hdf5"
+        self.patient_map: Dict[str, str] = {}
         self._load_patient_map()
 
-    def _load_patient_map(self):
+    def _load_patient_map(self) -> None:
         """
-        Lee el archivo Excel de solicitudes y mapea los identificadores 
-        de segmento al ID real del paciente para evitar fuga de datos.
+        Lee archivo Excel y mapea identificadores reales.
         """
-        df = pd.read_excel(self.config.excel_path, sheet_name=0)
-        df.rename(columns={col: col.lower() for col in df.columns}, inplace=True)
-        # Asegurar que los IDs son strings limpios
-        self.patient_map = {f"segment_{i:03d}": str(ref).strip() for i, ref in enumerate(df["reference"])}
+        try:
+            df = pd.read_excel(self.config.excel_path, sheet_name=0)
+            df.columns = [str(col).lower() for col in df.columns]
+            self.patient_map = {
+                f"segment_{i:03d}": str(ref).strip() 
+                for i, ref in enumerate(df["reference"])
+            }
+            logger.info("MAPA PACIENTES CARGADO")
+        except (FileNotFoundError, KeyError) as e:
+            logger.error(f"ERROR CARGANDO EXCEL: {e}")
+            raise PreprocessingError("Fallo al cargar mapa de pacientes.") from e
 
     def run_pipeline(self) -> None:
         """
-        Ejecuta el flujo completo de procesamiento: lectura de archivos,
-        extracción de ventanas, balanceo aleatorio de clases y escritura en HDF5.
+        Ejecuta flujo de procesamiento, balanceo aleatorio y guardado.
         """
-        # 1 LISTAR ARCHIVOS
-        files = list(self.config.input_path.glob("*.parquet"))
-        
-        # 2 COLECTORES TEMPORALES
-        storage = {0: [], 1: []}
-
-        for f in files:
-            label = 1 if "-1.parquet" in f.name else 0
-            chunks = self._generate_chunks_metadata(f)
-            storage[label].extend(chunks)
-
-        limit = min(len(storage[0]), len(storage[1]))
-        
-        if limit == 0:
-            print("# ERROR: NO HAY DATOS SUFICIENTES PARA BALANCEAR")
+        # LISTAR ARCHIVOS PARQUET
+        files: List[Path] = list(self.config.input_path.glob("*.parquet"))
+        if not files:
+            logger.warning("NO HAY ARCHIVOS PARQUET")
             return
 
-        # 3 BALANCEO ALEATORIO (PUNTO 10 DEL PROFESOR)
-        # En lugar de recortar secuencialmente, mezclamos aleatoriamente antes de recortar
-        random.seed(42) # Semilla para reproducibilidad
+        # CREAR COLECTORES TIPADOS
+        storage: Dict[int, List[Tuple[np.ndarray, str, int]]] = {0: [], 1: []}
+
+        for f in files:
+            label: int = 1 if "-1.parquet" in f.name else 0
+            chunks: List[Tuple[np.ndarray, str, int]] = self._generate_chunks_metadata(f)
+            storage[label].extend(chunks)
+
+        limit: int = min(len(storage[0]), len(storage[1]))
+        
+        if limit == 0:
+            logger.error("SIN DATOS PARA BALANCEAR")
+            return
+
+        # APLICAR BALANCEO ALEATORIO
+        random.seed(self.config.random_seed)
         random.shuffle(storage[0])
         random.shuffle(storage[1])
 
-        # 4 GUARDAR EN HDF5 
+        # GUARDAR ARCHIVO HDF5
         self.config.output_path.mkdir(parents=True, exist_ok=True)
-        with h5py.File(self.output_file, "w") as hf:
-            print(f"# LIMITE CALCULADO PARA BALANCEO: {limit} muestras por clase")
-            
-            for label in [0, 1]:
-                # Ahora coge los primeros 'limit', pero como ya están mezclados, es una muestra representativa
-                for data, path_str, lbl in storage[label][:limit]:
-                    ds = hf.create_dataset(path_str, data=data, compression="gzip")
-                    ds.attrs["label"] = lbl
-        
-        print(f"# ARCHIVO BALANCEADO Y PROTEGIDO: {self.output_file}")
-        print(f"# TOTAL VENTANAS: {limit * 2}")
+        try:
+            with h5py.File(self.output_file, "w") as hf:
+                logger.info(f"LIMITE BALANCEO: {limit}")
+                
+                for label in [0, 1]:
+                    for data, path_str, lbl in storage[label][:limit]:
+                        ds = hf.create_dataset(path_str, data=data, compression="gzip")
+                        ds.attrs["label"] = lbl
+                        
+            logger.info(f"ARCHIVO FINAL CREADO: {self.output_file.name}")
+        except OSError as e:
+            logger.error(f"ERROR GUARDANDO HDF5: {e}")
+            raise PreprocessingError("Fallo escritura de disco.") from e
 
     def _generate_chunks_metadata(self, file_path: Path) -> List[Tuple[np.ndarray, str, int]]:
         """
-        Genera metadatos y divide la señal en ventanas para un archivo especifico,
-        preservando la identidad real del paciente.
+        Genera metadatos y divide señal preservando identidad.
 
         :param file_path: Ruta del archivo parquet a procesar.
         :type file_path: Path
-        :return: Lista de tuplas que contienen el tensor de datos, la ruta interna HDF5 y la etiqueta.
+        :return: Lista de tensores, rutas internas y etiquetas.
         :rtype: List[Tuple[np.ndarray, str, int]]
         """
         try:
             df = pd.read_parquet(file_path).T.dropna()
-            data_values = df.values
-            num_records = len(data_values)
+            data_values: np.ndarray = df.values
+            num_records: int = len(data_values)
             
-            # Extraer información del nombre del archivo (ej. segment_000_tensor-1.parquet)
-            parts = file_path.stem.split("_")
-            seg_name = f"{parts[0]}_{parts[1]}" # "segment_000"
-            foot_info = parts[2].split("-") # ["tensor", "1"]
-            label = int(foot_info[1])
+            parts: List[str] = file_path.stem.split("_")
+            seg_name: str = f"{parts[0]}_{parts[1]}"
+            foot_info: List[str] = parts[2].split("-")
+            label: int = int(foot_info[1])
             
-            # RECUPERAR IDENTIDAD REAL DEL PACIENTE (PUNTO 3 DEL PROFESOR)
-            paciente_id = self.patient_map.get(seg_name, "PACIENTE_DESCONOCIDO")
+            paciente_id: str = self.patient_map.get(seg_name, "PACIENTE_DESCONOCIDO")
+            chunks_list: List[Tuple[np.ndarray, str, int]] = []
 
-            chunks_list = []
-
-            # SEÑAL CORTA: RESAMPLING (INTERPOLACION)
+            # APLICAR INTERPOLACION CORTA
             if num_records < self.config.fixed_length:
-                data = self._fix_length(data_values)
-                # SE GUARDA BAJO EL NOMBRE DEL PACIENTE REAL
-                path = f"{paciente_id}/{seg_name}_CH_000/Both"
+                data: np.ndarray = self._fix_length(data_values)
+                path: str = f"{paciente_id}/{seg_name}_CH_000/Both"
                 chunks_list.append((data, path, label))
                 return chunks_list
 
-            # VENTANA DESLIZANTE
-            target = self.config.fixed_length
-            step = self.config.step_size
-            idx = 0
+            # APLICAR VENTANA DESLIZANTE
+            target: int = self.config.fixed_length
+            step: int = self.config.step_size
+            idx: int = 0
 
             for start in range(0, num_records - target + 1, step):
-                chunk_data = data_values[start : start + target, :]
-                # SE GUARDA BAJO EL NOMBRE DEL PACIENTE REAL
+                chunk_data: np.ndarray = data_values[start : start + target, :]
                 path = f"{paciente_id}/{seg_name}_CH_{idx:03d}/Both"
                 chunks_list.append((chunk_data, path, label))
                 idx += 1
 
             return chunks_list
 
-        except Exception as e:
-            print(f"# ERROR PROCESANDO {file_path.name}: {e}")
+        except (OSError, pd.errors.EmptyDataError, ValueError) as e:
+            logger.warning(f"ARCHIVO IGNORADO {file_path.name}: {e}")
             return []
 
     def _fix_length(self, data: np.ndarray) -> np.ndarray:
         """
-        Ajusta la longitud del tensor mediante interpolación (resampling)
-        utilizando la transformada de Fourier.
+        Ajusta longitud del tensor mediante interpolación.
 
-        :param data: Tensor bidimensional con la señal original.
+        :param data: Tensor bidimensional original.
         :type data: np.ndarray
-        :return: Tensor bidimensional ajustado a la longitud configurada.
+        :return: Tensor ajustado.
         :rtype: np.ndarray
         """
-        target = self.config.fixed_length
+        target: int = self.config.fixed_length
         return signal.resample(data, target, axis=0)
 
-# EJECUTAR
-if __name__ == "__main__":
-    # RUTAS (Puedes ajustarlas a tu entorno)
-    INPUT = r"C:\Users\jairi\OneDrive\Escritorio\TFM\01_EXTRACCION DE DATOS\resultados"
-    OUTPUT = Path(r"C:\Users\jairi\OneDrive\Escritorio\TFM\DATASET_LISTONUEVO")
-    EXCEL_REF = Path(r"C:\Users\jairi\OneDrive\Escritorio\TFM\01_EXTRACCION DE DATOS\solicitud.xlsx")
+def main() -> None:
+    """
+    Punto de entrada con CLI.
+    """
+    parser = argparse.ArgumentParser(description="Preprocesamiento Parquet a HDF5")
+    parser.add_argument("--input", type=Path, required=True, help="Carpeta Parquets")
+    parser.add_argument("--output", type=Path, required=True, help="Carpeta Salida")
+    parser.add_argument("--excel", type=Path, required=True, help="Excel Solicitud")
+    args = parser.parse_args()
 
-    cfg = PreprocessConfig(input_path=INPUT, output_path=OUTPUT, excel_path=EXCEL_REF)
+    # INICIAR PIPELINE PRINCIPAL
+    cfg = PreprocessConfig(
+        input_path=args.input,
+        output_path=args.output,
+        excel_path=args.excel
+    )
+    
+    archiver = GaitDataArchiver(cfg)
+    archiver.run_pipeline()
+
+if __name__ == "__main__":
+    main()
     archiver = GaitDataArchiver(cfg)
     archiver.run_pipeline()
