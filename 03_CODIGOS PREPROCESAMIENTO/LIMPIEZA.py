@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 Módulo de limpieza y preprocesamiento de datos biomecánicos.
-Convierte archivos Parquet en un archivo HDF5 balanceado, corrigiendo
-la fuga de datos mediante el mapeo de identidades (Patient ID) y aplicando
-remuestreo (resampling) y balanceo aleatorio.
+Convierte archivos Parquet en HDF5 balanceado naturalmente.
+Incluye auditoría de reproducibilidad MLOps y tipado estricto.
 """
+
+from __future__ import annotations
 
 import h5py
 import numpy as np
@@ -12,10 +13,15 @@ import pandas as pd
 import logging
 import argparse
 import random
+import sys
+import json
+import hashlib
+import subprocess
+import platform
+from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Any
 from pydantic import BaseModel, DirectoryPath, Field
-from scipy import signal
 
 # CONFIGURAR LOGGING CENTRAL
 logging.basicConfig(
@@ -24,35 +30,111 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# EXCEPCIONES PERSONALIZADAS
 class PreprocessingError(Exception):
     """Excepción para errores de preprocesamiento."""
     pass
 
+# ============================================================
+# AUDITORIA Y REPRODUCIBILIDAD (MLOps)
+# ============================================================
+
+class ExperimentAuditor:
+    """
+    Auditor de reproducibilidad científica y determinismo.
+    """
+    def __init__(self, output_dir: Path) -> None:
+        """
+        Inicializa gestor de metadatos.
+
+        :param output_dir: Directorio de exportación.
+        :type output_dir: Path
+        """
+        self.output_dir = output_dir
+
+    @staticmethod
+    def enforce_determinism(seed: int = 42) -> None:
+        """
+        Fija semillas pseudoaleatorias globales.
+
+        :param seed: Valor de anclaje pseudoaleatorio.
+        :type seed: int
+        :return: Nada.
+        :rtype: None
+        """
+        random.seed(seed)
+        np.random.seed(seed)
+        logger.info(f"DETERMINISMO FORZADO: SEED {seed}")
+
+    def snapshot_experiment(self, config: BaseModel) -> Dict[str, Any]:
+        """
+        Genera registro inmutable del preprocesamiento.
+
+        :param config: Configuración validada Pydantic.
+        :type config: BaseModel
+        :return: Diccionario de auditoría.
+        :rtype: Dict[str, Any]
+        """
+        # SERIALIZAR CONFIGURACION
+        params_dict = config.model_dump()
+        serialized = json.dumps(params_dict, sort_keys=True, default=str)
+        
+        # GENERAR HASH UNICO
+        exp_hash = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+        # LEER REPOSITORIO GIT
+        try:
+            git_commit = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode("utf-8").strip()
+        except Exception:
+            git_commit = "untracked"
+
+        # EMPAQUETAR METADATA
+        metadata = {
+            "experiment_hash": exp_hash,
+            "timestamp_utc": datetime.utcnow().isoformat(),
+            "git_commit": git_commit,
+            "python_version": platform.python_version(),
+            "platform": platform.platform(),
+            "effective_params": params_dict
+        }
+
+        # GUARDAR JSON
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        meta_path = self.output_dir / f"prep_metadata_{exp_hash[:8]}.json"
+        with open(meta_path, "w", encoding="utf-8") as fh:
+            json.dump(metadata, fh, indent=4, ensure_ascii=False)
+
+        logger.info(f"SNAPSHOT GUARDADO: {meta_path.name}")
+        return metadata
+
+# ============================================================
 # CONFIGURACION PYDANTIC
+# ============================================================
+
 class PreprocessConfig(BaseModel):
     """
-    Configuración de rutas y parámetros para el preprocesamiento de la señal.
+    Parámetros inmutables de preprocesamiento y ventanas.
     """
     input_path: DirectoryPath
     output_path: Path
     excel_path: Path
     fixed_length: int = Field(default=100, gt=0)
-    step_size: int = Field(default=75, gt=0)
+    step_size: int = Field(default=10, gt=0)
     min_records: int = Field(default=10, gt=0)
     random_seed: int = Field(default=42, ge=0)
 
+# ============================================================
+# LOGICA DE EMPAQUETADO HDF5
+# ============================================================
+
 class GaitDataArchiver:
     """
-    Clase para generar un archivo HDF5 balanceado con resampling.
-    Corrección de Data Leakage (Patient ID) y balanceo aleatorio.
+    Empaquetador de datos en formato HDF5 jerárquico.
     """
-
     def __init__(self, config: PreprocessConfig) -> None:
         """
-        Inicializa el archivador con la configuración y genera el mapa.
+        Inicializa motor de almacenamiento.
 
-        :param config: Objeto de configuración de preprocesamiento.
+        :param config: Parametros de empaquetado.
         :type config: PreprocessConfig
         """
         self.config = config
@@ -62,7 +144,10 @@ class GaitDataArchiver:
 
     def _load_patient_map(self) -> None:
         """
-        Lee archivo Excel y mapea identificadores reales.
+        Lee archivo Excel y mapea identificadores de pacientes.
+
+        :return: Nada. Actualiza diccionario interno.
+        :rtype: None
         """
         try:
             df = pd.read_excel(self.config.excel_path, sheet_name=0)
@@ -73,61 +158,56 @@ class GaitDataArchiver:
             }
             logger.info("MAPA PACIENTES CARGADO")
         except (FileNotFoundError, KeyError) as e:
-            logger.error(f"ERROR CARGANDO EXCEL: {e}")
-            raise PreprocessingError("Fallo al cargar mapa de pacientes.") from e
+            logger.error(f"ERROR LEYENDO EXCEL: {e}")
+            raise PreprocessingError("Mapa fallido.") from e
 
     def run_pipeline(self) -> None:
         """
-        Ejecuta flujo de procesamiento, balanceo aleatorio y guardado.
+        Ejecuta flujo de empaquetado y mezcla aleatoria en HDF5.
+
+        :return: Nada. Guarda archivo en disco.
+        :rtype: None
         """
         # LISTAR ARCHIVOS PARQUET
         files: List[Path] = list(self.config.input_path.glob("*.parquet"))
         if not files:
-            logger.warning("NO HAY ARCHIVOS PARQUET")
+            logger.warning("PARQUETS NO ENCONTRADOS")
             return
 
-        # CREAR COLECTORES TIPADOS
-        storage: Dict[int, List[Tuple[np.ndarray, str, int]]] = {0: [], 1: []}
+        # COLECTOR DE DATOS
+        storage: List[Tuple[np.ndarray, str, int]] = []
 
         for f in files:
-            label: int = 1 if "-1.parquet" in f.name else 0
             chunks: List[Tuple[np.ndarray, str, int]] = self._generate_chunks_metadata(f)
-            storage[label].extend(chunks)
-
-        limit: int = min(len(storage[0]), len(storage[1]))
+            storage.extend(chunks)
         
-        if limit == 0:
-            logger.error("SIN DATOS PARA BALANCEAR")
+        if not storage:
+            logger.error("NO HAY DATOS")
             return
 
-        # APLICAR BALANCEO ALEATORIO
-        random.seed(self.config.random_seed)
-        random.shuffle(storage[0])
-        random.shuffle(storage[1])
+        # MEZCLA ALEATORIA DATOS
+        random.shuffle(storage)
 
-        # GUARDAR ARCHIVO HDF5
+        # GUARDAR HDF5 DISCO
         self.config.output_path.mkdir(parents=True, exist_ok=True)
         try:
             with h5py.File(self.output_file, "w") as hf:
-                logger.info(f"LIMITE BALANCEO: {limit}")
-                
-                for label in [0, 1]:
-                    for data, path_str, lbl in storage[label][:limit]:
-                        ds = hf.create_dataset(path_str, data=data, compression="gzip")
-                        ds.attrs["label"] = lbl
+                for data, path_str, lbl in storage:
+                    ds = hf.create_dataset(path_str, data=data, compression="gzip")
+                    ds.attrs["label"] = lbl
                         
-            logger.info(f"ARCHIVO FINAL CREADO: {self.output_file.name}")
+            logger.info(f"HDF5 CREADO: {len(storage)} muestras")
         except OSError as e:
-            logger.error(f"ERROR GUARDANDO HDF5: {e}")
-            raise PreprocessingError("Fallo escritura de disco.") from e
+            logger.error(f"ERROR ESCRITURA DISCO: {e}")
+            raise PreprocessingError("Fallo guardado.") from e
 
     def _generate_chunks_metadata(self, file_path: Path) -> List[Tuple[np.ndarray, str, int]]:
         """
-        Genera metadatos y divide señal preservando identidad.
+        Aplica ventana deslizante y extrae metadatos.
 
-        :param file_path: Ruta del archivo parquet a procesar.
+        :param file_path: Ruta archivo parquet individual.
         :type file_path: Path
-        :return: Lista de tensores, rutas internas y etiquetas.
+        :return: Lista de tuplas con tensores, rutas jerárquicas y etiquetas.
         :rtype: List[Tuple[np.ndarray, str, int]]
         """
         try:
@@ -143,14 +223,14 @@ class GaitDataArchiver:
             paciente_id: str = self.patient_map.get(seg_name, "PACIENTE_DESCONOCIDO")
             chunks_list: List[Tuple[np.ndarray, str, int]] = []
 
-            # APLICAR INTERPOLACION CORTA
+            # PADDING PARA SEÑALES CORTAS
             if num_records < self.config.fixed_length:
                 data: np.ndarray = self._fix_length(data_values)
                 path: str = f"{paciente_id}/{seg_name}_CH_000/Both"
                 chunks_list.append((data, path, label))
                 return chunks_list
 
-            # APLICAR VENTANA DESLIZANTE
+            # VENTANA DESLIZANTE CON OVERLAP
             target: int = self.config.fixed_length
             step: int = self.config.step_size
             idx: int = 0
@@ -164,42 +244,68 @@ class GaitDataArchiver:
             return chunks_list
 
         except (OSError, pd.errors.EmptyDataError, ValueError) as e:
-            logger.warning(f"ARCHIVO IGNORADO {file_path.name}: {e}")
+            logger.warning(f"OMITIENDO ARCHIVO {file_path.name}: {e}")
             return []
 
     def _fix_length(self, data: np.ndarray) -> np.ndarray:
         """
-        Ajusta longitud del tensor mediante interpolación.
+        Realiza padding replicando el valor del último estado.
 
-        :param data: Tensor bidimensional original.
+        :param data: Tensor original incompleto.
         :type data: np.ndarray
-        :return: Tensor ajustado.
+        :return: Tensor extendido a longitud fija objetivo.
         :rtype: np.ndarray
         """
         target: int = self.config.fixed_length
-        return signal.resample(data, target, axis=0)
+        current_len = data.shape[0]
+        
+        if current_len >= target:
+            return data[:target, :]
+            
+        # PADDING VALOR FINAL
+        pad_size = target - current_len
+        pad_values = np.tile(data[-1, :], (pad_size, 1))
+        return np.vstack((data, pad_values))
+
+# ============================================================
+# FLUJO PRINCIPAL
+# ============================================================
 
 def main() -> None:
     """
-    Punto de entrada con CLI.
+    Punto de entrada de ejecución del preprocesamiento.
     """
-    parser = argparse.ArgumentParser(description="Preprocesamiento Parquet a HDF5")
-    parser.add_argument("--input", type=Path, required=True, help="Carpeta Parquets")
-    parser.add_argument("--output", type=Path, required=True, help="Carpeta Salida")
-    parser.add_argument("--excel", type=Path, required=True, help="Excel Solicitud")
+    parser = argparse.ArgumentParser(description="Pipeline Parquet a HDF5")
+    parser.add_argument("--input", type=Path, required=True, help="Ruta de lectura Parquet")
+    parser.add_argument("--output", type=Path, required=True, help="Ruta destino HDF5")
+    parser.add_argument("--excel", type=Path, required=True, help="Ruta metadatos Excel")
     args = parser.parse_args()
 
-    # INICIAR PIPELINE PRINCIPAL
-    cfg = PreprocessConfig(
-        input_path=args.input,
-        output_path=args.output,
-        excel_path=args.excel
-    )
-    
-    archiver = GaitDataArchiver(cfg)
-    archiver.run_pipeline()
+    try:
+        # VALIDAR CONFIGURACION
+        cfg = PreprocessConfig(
+            input_path=args.input,
+            output_path=args.output,
+            excel_path=args.excel
+        )
+        
+        # FIJAR DETERMINISMO GLOBALES
+        ExperimentAuditor.enforce_determinism(cfg.random_seed)
+
+        # INICIAR AUDITORIA Y SNAPSHOT
+        auditor = ExperimentAuditor(cfg.output_path)
+        auditor.snapshot_experiment(cfg)
+        
+        # EJECUTAR PIPELINE
+        archiver = GaitDataArchiver(cfg)
+        archiver.run_pipeline()
+        
+    except Exception as e:
+        logger.critical(f"ERROR IRRECUPERABLE DETECTADO: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
+    main()
     main()
     archiver = GaitDataArchiver(cfg)
     archiver.run_pipeline()
