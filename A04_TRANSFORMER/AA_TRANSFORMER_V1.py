@@ -796,9 +796,9 @@ def main() -> None:
     parser.add_argument("--dataset", type=Path, required=True)
     args = parser.parse_args()
 
-    # CONFIGURAR RUTAS ABSOLUTAS
-    OUTPUT_BASE_DIR = Path(r"C:\Users\jairi\OneDrive\Escritorio\TFM\05_MODELOS_ENTRENADOS")
-    GRAFICAS_DIR = OUTPUT_BASE_DIR / "GRAFICAS"
+    # CONFIGURAR RUTAS RELATIVAS
+    OUTPUT_BASE_DIR = Path("./modelos_entrenados")
+    GRAFICAS_DIR = OUTPUT_BASE_DIR / "graficas"
     OUTPUT_BASE_DIR.mkdir(parents=True, exist_ok=True)
     GRAFICAS_DIR.mkdir(parents=True, exist_ok=True)
 

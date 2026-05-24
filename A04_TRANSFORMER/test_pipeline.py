@@ -12,12 +12,8 @@ import numpy as np
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 
-# INYECTAR RUTA PREPROCESAMIENTO
-sys.path.append(r"C:\Users\jairi\OneDrive\Escritorio\TFM\03_CODIGOS PREPROCESAMIENTO")
-
 # IMPORTAR MODULOS TFM
-from LIMPIEZA import GaitDataArchiver, PreprocessConfig
-from inferencia_sliding import MotorInferenciaMixta
+from preprocesamiento.LIMPIEZA import GaitDataArchiver, PreprocessConfig
 
 # INICIO DE PRUEBAS
 

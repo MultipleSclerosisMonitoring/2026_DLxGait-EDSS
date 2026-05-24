@@ -24,15 +24,10 @@ import torch
 from scipy.fft import rfft
 
 # =========================================================
-# AÑADIR RUTAS DEL PROYECTO
-# =========================================================
-sys.path.append(str(Path(r"C:\Users\jairi\OneDrive\Escritorio\TFM\01_EXTRACCION DE DATOS")))
-sys.path.append(str(Path(r"C:\Users\jairi\OneDrive\Escritorio\TFM\04_CODIGO TRANSFORMER")))
-
-# =========================================================
 # IMPORTS DEL PROYECTO REFACTORIZADO
 # =========================================================
-from extract_data_plus import (
+
+from extraccion_datos.extract_data_plus import (
     cInfluxDB,
     SignalAligner,
     GaitFeatureExtractor,
@@ -42,7 +37,7 @@ from extract_data_plus import (
     load_param_config
 )
 
-from TRANSFORMER_V1 import (
+from codigo_transformer.AA_TRANSFORMER_V1 import (
     GaitTransformer,
     TransformerConfig,
     FFTModel,
