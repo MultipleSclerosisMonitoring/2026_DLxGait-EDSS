@@ -15,8 +15,19 @@ dependencies = [
     "torch",
     "joblib",
     "influxdb-client",
-    "pyyaml"
+    "pyyaml",
+    "pydantic",
+    "h5py",
+    "matplotlib",
+    "scikit-learn",
+    "pytest"
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = [
+    "A01_EXTRACCION_DATOS",
+    "A02_LABELING",
+    "A03_PREPROCESAMIENTO",
+    "A04_TRANSFORMER"
+]

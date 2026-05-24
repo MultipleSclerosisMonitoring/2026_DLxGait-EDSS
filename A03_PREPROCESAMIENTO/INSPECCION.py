@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
+
 """
 Created on Sun Feb 22 2026
 @author: jairi
 """
 
 import h5py
+import argparse
 import pandas as pd
 import numpy as np
 from collections import Counter
@@ -84,14 +86,41 @@ class GaitSummarizer:
         except Exception as e:
             print(f"# ERROR SENSORES: {e}")
 
-# EJECUCION 
+# EJECUCION
 
 if __name__ == "__main__":
-    H5_PATH = Path(r"C:\Users\jairi\OneDrive\Escritorio\TFM\CODIGOS PREPROCESAMIENTO\DATASET_LISTO\dataset_jerarquico.hdf5")
-    PARQUET_PATH = Path(r"C:\Users\jairi\OneDrive\Escritorio\TFM\CODIGOS EXTRACCION\DATOS_PARQUET_CRUDOS\PARQUETS")
 
-    cfg = VisualizerConfig(h5_file=H5_PATH, parquet_dir=PARQUET_PATH)
+    parser = argparse.ArgumentParser(
+        description="Analizador estadistico del dataset gait transformer"
+    )
+
+    parser.add_argument(
+        "--h5",
+        type=Path,
+        required=True,
+        help="Ruta al archivo HDF5"
+    )
+
+    parser.add_argument(
+        "--parquet-dir",
+        type=Path,
+        required=True,
+        help="Directorio con archivos parquet"
+    )
+
+    args = parser.parse_args()
+
+    cfg = VisualizerConfig(
+        h5_file=args.h5,
+        parquet_dir=args.parquet_dir
+    )
+
     resumen = GaitSummarizer(cfg)
 
     resumen.print_dataset_summary()
     resumen.discover_features()
+
+#EJECUTAR EN CONSOLA
+#python -m A03_PREPROCESAMIENTO.INSPECCION \
+#--h5 DATASET_LISTO/dataset_jerarquico.hdf5 \
+#--parquet-dir DATOS_PARQUET_CRUDOS/PARQUETS

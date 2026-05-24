@@ -27,7 +27,7 @@ from scipy.fft import rfft
 # IMPORTS DEL PROYECTO REFACTORIZADO
 # =========================================================
 
-from extraccion_datos.extract_data_plus import (
+from A01_EXTRACCION_DATOS.extract_data_plus import (
     cInfluxDB,
     SignalAligner,
     GaitFeatureExtractor,
@@ -37,7 +37,7 @@ from extraccion_datos.extract_data_plus import (
     load_param_config
 )
 
-from codigo_transformer.AA_TRANSFORMER_V1 import (
+from A04_TRANSFORMER.AA_TRANSFORMER_V1 import (
     GaitTransformer,
     TransformerConfig,
     FFTModel,

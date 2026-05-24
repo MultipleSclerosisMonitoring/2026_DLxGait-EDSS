@@ -13,7 +13,10 @@ from unittest.mock import patch, MagicMock
 from pathlib import Path
 
 # IMPORTAR MODULOS TFM
-from preprocesamiento.LIMPIEZA import GaitDataArchiver, PreprocessConfig
+from A03_PREPROCESAMIENTO.LIMPIEZA import (
+    GaitDataArchiver,
+    PreprocessConfig
+)
 
 # INICIO DE PRUEBAS
 
@@ -32,7 +35,7 @@ def config_prueba(tmp_path):
         step_size=25
     )
 
-@patch("LIMPIEZA.pd.read_excel")
+@patch("A03_PREPROCESAMIENTO.LIMPIEZA.pd.read_excel")
 def test_fix_length_resampling(mock_read_excel, config_prueba):
     """
     Prueba Unitaria 1: Verifica que el remuestreo (resampling) ajusta
