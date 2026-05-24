@@ -884,3 +884,4 @@ def main() -> None:
         logger.critical(f"ERROR EXCEPCION CRITICA DETECTADA: {e}")
 
 if __name__ == "__main__":
+    main()
