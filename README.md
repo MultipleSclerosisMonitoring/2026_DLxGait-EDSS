@@ -9,6 +9,41 @@ Este repositorio contiene la arquitectura de extremo a extremo (*end-to-end*) pa
 
 ---
 
+# Instalación
+
+Cree y active un entorno virtual y, posteriormente, instale el proyecto en modo editable:
+
+```bash
+pip install -e .
+```
+
+Alternativamente, las dependencias también pueden instalarse mediante:
+
+```bash
+pip install -r requirements.txt
+```
+
+# Uso
+
+Los scripts deben ejecutarse como módulos Python desde la raíz del repositorio.
+
+Ejemplo:
+
+```bash
+python -m A04_TRANSFORMER.Agnostic_evaluator
+```
+
+No ejecute los scripts directamente mediante rutas relativas como:
+
+```bash
+python A04_TRANSFORMER/Agnostic_evaluator.py
+```
+
+ya que esto puede provocar errores en la resolución de imports y paquetes Python.
+
+
+---
+
 ## Arquitectura 
 
 La arquitectura ha sido migrada a **PyTorch** para garantizar un flujo continuo y evitar el *Data Leakage*. El sistema se divide en tres enfoques modulares:
@@ -24,52 +59,6 @@ La arquitectura ha sido migrada a **PyTorch** para garantizar un flujo continuo 
 *La validación inter-sujeto se garantiza mediante `StratifiedGroupKFold`.*
 
 ---
-
-## Instalación (Setup)
-
-Para que el motor de Python reconozca la estructura de módulos locales y resuelva las dependencias correctamente, clona el repositorio y ejecuta el siguiente comando en la raíz (donde se encuentra el archivo `pyproject.toml`):
-
-```bash
-pip install -e .
-Flujo de Ejecución (Quickstart)
-El código ha sido refactorizado implementando tipado estricto, logging estructurado y validaciones CLI mediante argparse y Pydantic. Ejecutar siempre desde la raíz del proyecto.
-
-1. Extracción de Datos (InfluxDB)
-Bash
-python -m a01_extraccion_datos.extract_data_plus --backend influxdbms -c ./config.yaml -e solicitud.xlsx -o ./resultados
-2. Preprocesamiento y Balanceo (Generación HDF5)
-Bash
-python -m a03_preprocesamiento.LIMPIEZA --input ./resultados --output ./DATASET --excel solicitud.xlsx
-3. Entrenamiento (Deep Learning)
-Bash
-python -m a04_transformer.AA_TRANSFORMER_V1 --dataset ./DATASET/dataset_jerarquico.hdf5 --output ./modelos_entrenados
-4. Evaluación Agnóstica Continua (Inferencia InfluxDB)
-Bash
-python -m a04_transformer.Agnostic_evaluator -c "./config.yaml" -m "./modelos_entrenados" -r "JASAHUG010-85" --start "2025-12-24 09:51:00" --end "2025-12-24 10:38:00" -o "./evaluacion_continua.csv"
-Troubleshooting (Solución de Problemas)
-InfluxExtractionError: Configuración faltante:
-
-Causa: El archivo config.yaml no se encuentra. Por políticas de seguridad, las credenciales no se suben al repositorio.
-
-Solución: Solicita el archivo de configuración al administrador y colócalo en el directorio raíz.
-
-extract_data_plus: error: the following arguments are required: -e/--excel:
-
-Causa: Se está intentando extraer datos sin proveer el mapeo de identidades.
-
-Solución: Añade la bandera -e solicitud.xlsx al ejecutar por terminal.
-
-ModuleNotFoundError: No module named 'a01_extraccion_datos':
-
-Causa: El proyecto no se ha instalado en el entorno virtual activo.
-
-Solución: Ejecuta pip install -e . en la raíz del proyecto.
-
-pydantic_core.ValidationError: Path does not point to a directory:
-
-Causa: Las rutas pasadas por consola a los scripts de limpieza o inferencia no existen en el disco duro.
-
-Solución: Verifica que la carpeta de entrada ha sido creada previamente.
 
 Roadmap (Próximos Pasos)
 [x] Fase 1-4: Pipeline de extracción y clasificación robusta Marcha vs. Reposo.

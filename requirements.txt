@@ -1,0 +1,12 @@
+numpy
+pandas
+scipy
+torch
+joblib
+influxdb-client
+pyyaml
+pydantic
+h5py
+matplotlib
+scikit-learn
+pytest
