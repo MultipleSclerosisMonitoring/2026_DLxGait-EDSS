@@ -797,7 +797,8 @@ def main() -> None:
     args = parser.parse_args()
 
     # CONFIGURAR RUTAS RELATIVAS
-    OUTPUT_BASE_DIR = Path("./modelos_entrenados")
+    BASE_DIR = Path(__file__).resolve().parent.parent
+    OUTPUT_BASE_DIR = BASE_DIR / "A05_MODELOS_ENTRENADOS"
     GRAFICAS_DIR = OUTPUT_BASE_DIR / "graficas"
     OUTPUT_BASE_DIR.mkdir(parents=True, exist_ok=True)
     GRAFICAS_DIR.mkdir(parents=True, exist_ok=True)
