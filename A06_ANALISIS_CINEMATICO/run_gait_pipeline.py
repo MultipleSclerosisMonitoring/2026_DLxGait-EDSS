@@ -66,7 +66,7 @@ class GaitOrchestrator:
         
         # DEFINIR RUTA CONFIGURACION
         self.project_root = Path(__file__).resolve().parent.parent
-        self.config_yaml = self.project_root / "A01_EXTRACCION_DATOS" / ".config.yaml"
+        self.config_yaml = self.project_root / "A01_EXTRACCION_DATOS" / "config.yaml"
 
     def _fetch_data(self) -> pd.DataFrame:
         """
