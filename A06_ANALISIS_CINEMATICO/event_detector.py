@@ -257,13 +257,13 @@ if __name__ == "__main__":
     config_yaml_path = (
         PROJECT_ROOT
         / "A01_EXTRACCION_DATOS"
-        / ".config.yaml"
+        / "config.yaml"
     )
 
     if not config_yaml_path.exists():
 
         print(
-            f"ERROR: Archivo .config.yaml no encontrado en "
+            f"ERROR: Archivo config.yaml no encontrado en "
             f"{config_yaml_path}"
         )
 
