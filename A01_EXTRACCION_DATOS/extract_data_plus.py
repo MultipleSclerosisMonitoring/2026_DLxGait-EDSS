@@ -380,12 +380,20 @@ class cInfluxDB:
             self.url: str = config['influxdb']['url']
             self.tzval: str = config['influxdb'].get('tzval', 'Europe/Madrid')
 
+            # ENMASCARAR TOKEN Y LOGUEAR PARAMETROS PARA DEPURACION
+            safe_token = f"{self.token[:4]}...{self.token[-4:]}" if len(self.token) > 8 else "***"
+            logger.info(f"DEBUG INFLUXDB - URL: {self.url}")
+            logger.info(f"DEBUG INFLUXDB - ORG: {self.org}")
+            logger.info(f"DEBUG INFLUXDB - BUCKET: {self.bucket}")
+            logger.info(f"DEBUG INFLUXDB - TOKEN (PARCIAL): {safe_token}")
+
             self.client = InfluxDBClient(
                 url=self.url, token=self.token, org=self.org, 
                 verify_ssl=False, timeout=timeout
             )
             self.measurement: str = self.bucket.split("/")[0] if '/' in self.bucket else self.bucket
             logger.info("CONEXION INFLUXDB ESTABLECIDA")
+            
         except FileNotFoundError as e:
             logger.error(f"YAML NO ENCONTRADO: {e}")
             raise InfluxExtractionError("Configuración faltante.") from e
