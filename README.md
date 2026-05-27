@@ -14,9 +14,7 @@ Este repositorio contiene la arquitectura de extremo a extremo (*end-to-end*) pa
 Cree y active un entorno virtual. Para garantizar la correcta resolución de paquetes e *imports* desde cualquier directorio, instale el proyecto en modo editable:
 
 
-Markdown
-
-```bash
+Bash
 pip install -e .
 Alternativamente, las dependencias también pueden instalarse mediante:
 
