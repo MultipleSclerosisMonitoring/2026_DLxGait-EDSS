@@ -5,9 +5,12 @@ influxdb:
   url: "https://TU_IP_O_LOCALHOST:8086/"
 
 params:
-  freq_target_hz: 75       # FRECUENCIA DE INTERPOLACIÓN
-  window_overlap: 0.90     # SOLAPAMIENTO DE VENTANAS
-  fact_hz: 4.0            # FACTOR PARA VENTANA DE 56 PUNTOS
+  freq_target_hz: 75
+  freq_psd_hz: 20
+  fact_hz: 4.0
+  f_start_hz: 0.0
+  f_stop_hz: 7.0
+  window_overlap: 0.90
 
 Location:
   proj: 'utm'
