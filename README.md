@@ -65,7 +65,7 @@ El config.yaml no contiene credenciales reales.
 Antes de ejecutar cualquier pipeline, edite el archivo:
 
 ```text
-A01_EXTRACCION_DATOS/.config.yaml
+A01_EXTRACCION_DATOS/config.yaml
 ```
 
 ---
