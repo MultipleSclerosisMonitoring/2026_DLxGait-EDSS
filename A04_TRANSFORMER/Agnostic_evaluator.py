@@ -80,6 +80,88 @@ class AgnosticEvaluator:
         logger.info("TRANSFORMER CONFIGURATION LOADED")
 
         # 4. INICIALIZAR REDES
+        self._init_models()# -*- coding: utf-8 -*-
+"""
+Agnostic Evaluation System for Continuous Biomechanical Gait Analysis.
+
+This module provides a unified pipeline to query continuous sensor data from
+InfluxDB, compute the PSD Spectrograms matching the training phase,
+and yield second-by-second predictions smoothed via rolling window.
+Actualizado para interoperabilidad con la arquitectura MLOps (POO/Pydantic).
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List
+
+import joblib
+import numpy as np
+import pandas as pd
+import torch
+from scipy.fft import rfft
+
+# =========================================================
+# IMPORTS DEL PROYECTO REFACTORIZADO
+# =========================================================
+
+from A01_EXTRACCION_DATOS.extract_data_plus import (
+    cInfluxDB,
+    SignalAligner,
+    GaitFeatureExtractor,
+    ExtractionParams,
+    SENSOR_FIELDS_INFLUXDBMS,
+    FEET,
+    load_param_config
+)
+
+from A04_TRANSFORMER.AA_TRANSFORMER_V1 import (
+    GaitTransformer,
+    TransformerConfig,
+    FFTModel,
+    GaitHybridModel,
+)
+
+# =========================================================
+# CONFIGURAR LOGGING
+# =========================================================
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
+# =========================================================
+# MOTOR DE EVALUACION CONTINUA
+# =========================================================
+class AgnosticEvaluator:
+    """Deploys end-to-end continuous inference over an isolated time interval."""
+
+    def __init__(self, config_path: Path, model_dir: Path) -> None:
+        """Inicializa entorno y carga artefactos."""
+        self.model_dir = model_dir
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        logger.info(f"DEVICE DETECTED: {self.device}")
+
+        # 1. CLIENTE Y CONFIGURACION PYDANTIC
+        self.client = cInfluxDB(config_path=str(config_path))
+        yaml_cfg = load_param_config(config_path)
+        params_dict = yaml_cfg.get('params', yaml_cfg)
+        self.extraction_params = ExtractionParams(**params_dict)
+
+        # 2. CARGAR ESCALADOR
+        scaler_path = model_dir / "scaler_gait.joblib"
+        if not scaler_path.exists(): raise FileNotFoundError("Scaler not found")
+        self.scaler = joblib.load(scaler_path)
+
+        # 3. CARGAR CONFIGURACION TRANSFORMER
+        cfg_path = model_dir / "transformer_config.joblib"
+        if not cfg_path.exists(): raise FileNotFoundError("Transformer config missing")
+        self.t_cfg = TransformerConfig(**joblib.load(cfg_path))
+        logger.info("TRANSFORMER CONFIGURATION LOADED")
+
+        # 4. INICIALIZAR REDES
         self._init_models()
 
     def _init_models(self) -> None:
@@ -101,15 +183,16 @@ class AgnosticEvaluator:
         self.model_hybrid.eval()
         logger.info("TODOS LOS MODELOS CARGADOS (TIEMPO, FFT, HIBRIDO)")
 
-        # CARGAR THRESHOLD Y CALIBRACION TERMICA
-        self.threshold = joblib.load(self.model_dir / "optimal_threshold_hibrido.joblib")
-        try:
-            self.temperature = joblib.load(self.model_dir / "optimal_temperature_hibrido.joblib")
-            logger.info(f"CALIBRACION (TEMPERATURE SCALING) CARGADA: T={self.temperature:.4f}")
-        except FileNotFoundError:
-            self.temperature = 1.0
-            logger.warning("TEMPERATURA NO ENCONTRADA. USANDO T=1.0")
-        logger.info(f"UMBRAL OPTIMO: {self.threshold:.4f}")
+        # CARGAR THRESHOLD
+        threshold_data = joblib.load(
+              self.model_dir / "optimal_threshold_hibrido.joblib"
+        )
+        if isinstance(threshold_data, dict):
+            self.threshold = threshold_data.get("youden_threshold", 0.5)
+        else:
+            self.threshold = float(threshold_data)
+            
+        logger.info(f"UMBRAL OPTIMO: {self.threshold:.6f}")    
 
     def fetch_and_align_stream(self, reference: str, start: datetime, end: datetime) -> Dict[str, pd.DataFrame]:
         """Queries continuous sensor streams and normalizes timebase via Object Oriented Aligner."""
@@ -198,10 +281,10 @@ class AgnosticEvaluator:
             x_time_tensor = torch.from_numpy(x_time_np).to(self.device)
             x_fft_tensor = torch.from_numpy(x_fft_np).to(self.device)
 
-            # PREDICCION CON TEMPERATURE SCALING
+            # PREDICCION 
             with torch.no_grad():
                 out_hybrid_logits = self.model_hybrid(x_time_tensor, x_fft_tensor)
-                prob_hybrid = torch.softmax(out_hybrid_logits / self.temperature, dim=1)[0, 1].item()
+                prob_hybrid = torch.softmax(out_hybrid_logits, dim=1)[0, 1].item()
                 pred_hybrid = int(prob_hybrid >= self.threshold)
 
             results_log.append({
