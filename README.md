@@ -1,69 +1,269 @@
-# ESTIMACIÓN DE DETERIORO EN ESCLEROSIS MÚLTIPLE FUNCIÓN DEL COMPORTAMIENTO EN TESTS PREESTABLECIDOS
+# ESTIMACIÓN DE DETERIORO EN ESCLEROSIS MÚLTIPLE
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-ee4c2c.svg)](https://pytorch.org/)
-[![Tests](https://img.shields.io/badge/Tests-Pytest-success.svg)](#)
-[![Code style: PEP8](https://img.shields.io/badge/Code%20Style-PEP8-yellow.svg)](https://pep8.org/)
+## Análisis biomecánico mediante calcetines inteligentes (SCKS)
 
-Este repositorio contiene la arquitectura de extremo a extremo (*end-to-end*) para la extracción, preprocesamiento y modelado de datos biomecánicos obtenidos mediante calcetines inteligentes (SCKS) en pacientes con Esclerosis Múltiple.
+![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
+![PyTorch](https://img.shields.io/badge/PyTorch-DeepLearning-red.svg)
+![PEP8](https://img.shields.io/badge/Code%20Style-PEP8-green.svg)
 
 ---
 
-## Instalación y Configuración
+# Descripción
 
-Cree y active un entorno virtual. Para garantizar la correcta resolución de paquetes e *imports* desde cualquier directorio, instale el proyecto en modo editable:
+Este repositorio contiene una arquitectura end-to-end para la extracción, preprocesamiento y modelado de datos biomecánicos obtenidos mediante calcetines inteligentes (SCKS) en pacientes con Esclerosis Múltiple (EM).
 
+El sistema implementa:
 
-Bash
+- Extracción de señales desde InfluxDB
+- Preprocesamiento biomecánico
+- Reconstrucción cinemática basada en IMUs
+- Detección de eventos de marcha
+- Modelado profundo mediante PyTorch
+- Inferencia híbrida Tiempo + Frecuencia
+
+---
+
+# Instalación
+
+## 1. Crear entorno virtual
+
+```bash
+conda create -n tfm python=3.10
+conda activate tfm
+```
+
+---
+
+## 2. Instalar dependencias
+
+### Instalación editable (recomendada)
+
+```bash
 pip install -e .
-Alternativamente, las dependencias también pueden instalarse mediante:
+```
 
-Bash
+### Alternativamente
+
+```bash
 pip install -r requirements.txt
-Autenticación de Base de Datos (InfluxDB)
-El proyecto utiliza InfluxDB v2, que requiere autenticación obligatoria mediante Token. Por motivos de seguridad, el repositorio incluye una plantilla.
+```
 
-Antes de ejecutar los procesos de extracción, edite el archivo A01_EXTRACCION_DATOS/.config.yaml y sustituya el campo token por sus credenciales locales reales:
+---
 
-YAML
-influxdb:
-  bucket: "Gait/autogen"
-  org: "UPM"
-  token: "SU_TOKEN_REAL_AQUI"  # <-- SUSTITUIR POR SU TOKEN
-  url: "https://localhost:8086/"  # <-- AJUSTAR IP SI ES NECESARIO
-Uso
-Gracias al empaquetado del proyecto (setup.py), ambos modos de ejecución son totalmente equivalentes y válidos. Puede lanzar los scripts desde la raíz del repositorio de las siguientes formas:
+# Configuración de InfluxDB
 
-Bash
-# Opción 1: Ejecución como módulo
+El config.yaml no contiene credenciales reales.
+
+Antes de ejecutar cualquier pipeline, edite el archivo:
+
+```text
+A01_EXTRACCION_DATOS/.config.yaml
+```
+
+---
+
+# Ejecución
+
+Gracias al empaquetado mediante `setup.py`, el proyecto puede ejecutarse desde cualquier directorio.
+
+## Opción 1 — Ejecución como módulo
+
+```bash
 python -m A04_TRANSFORMER.Agnostic_evaluator
+```
 
-# Opción 2: Ejecución mediante ruta relativa
+## Opción 2 — Ejecución mediante ruta relativa
+
+```bash
 python A04_TRANSFORMER/Agnostic_evaluator.py
-Arquitectura
-La arquitectura ha sido migrada a PyTorch para garantizar un flujo continuo y evitar el Data Leakage. El sistema se divide en tres enfoques modulares:
+```
+---
 
-Rama Temporal (Transformer Encoder):
+## 1. Rama Temporal — Transformer Encoder
 
-Captura dependencias secuenciales a largo plazo en los datos crudos del giroscopio y acelerómetro.
+Captura dependencias secuenciales de largo alcance en señales IMU:
 
-Utiliza Multi-Head Attention para identificar patrones anómalos de la marcha en el dominio del tiempo.
+- Acelerómetro
+- Giroscopio
 
-Rama Frecuencial (FFT - Multi-Layer Perceptron):
+### Características
 
-Transforma las ventanas temporales mediante la Transformada Rápida de Fourier (RFFT).
+- Multi-Head Attention
+- Positional Encoding
+- Aprendizaje temporal profundo
+- Detección de patrones anómalos de marcha
 
-Aísla las micro-frecuencias generadas por impactos instantáneos (apoyado en la justificación biomecánica de Müller et al., 2021).
+---
 
-Modelo Híbrido (Early Fusion):
+## 2. Rama Frecuencial — FFT + MLP
 
-Concatena los espacios latentes de ambas ramas (Tiempo + Frecuencia) antes del cabezal de clasificación, logrando una inferencia altamente robusta.
+Transforma ventanas temporales mediante:
 
-La validación inter-sujeto se garantiza mediante StratifiedGroupKFold.
+```text
+RFFT (Real Fast Fourier Transform)
+```
 
-Roadmap (Próximos Pasos)
-[x] Fase 1-4: Pipeline de extracción y clasificación robusta Marcha vs. Reposo.
+### Objetivo
 
-[x] Refactorización Core: Implementación de tests unitarios (pytest), empaquetado PEP 8, tipado estricto y POO corporativa.
+Aislar micro-frecuencias biomecánicas generadas por impactos instantáneos de la marcha.
 
-[ ] --TENTATIVO-- Fase 5: Regresor Clínico (EDSS): Utilizar los embeddings latentes generados por el modelo híbrido como entrada para una red Tabular (TabTransformer/MLP-Mixer) capaz de predecir el grado de discapacidad EDSS, uniendo la marcha con las covariables demográficas y cognitivas de los pacientes.
+### Fundamentación biomecánica
+
+Basado en:
+
+```text
+Müller et al., 2021
+```
+
+---
+
+## 3. Modelo Híbrido — Early Fusion
+
+Concatena espacios latentes de:
+
+- Rama Temporal
+- Rama Frecuencial
+
+antes del cabezal de clasificación final.
+
+### Ventajas
+
+- Mayor robustez
+- Mejor generalización
+- Inferencia multimodal
+- Reducción del ruido biomecánico
+
+---
+
+# Validación
+
+La validación inter-sujeto se implementa mediante:
+
+```python
+StratifiedGroupKFold
+```
+
+Esto garantiza:
+
+- Separación estricta por paciente
+- Prevención de leakage entre sujetos
+- Evaluación clínica realista
+
+---
+
+# Pipeline Biomecánico (A06)
+
+## Detección de Eventos
+
+- Heel Strike (HS)
+- Toe Off (TO)
+
+mediante:
+
+- Presión plantar
+- Giroscopio sagital
+- Umbral adaptativo
+- Histéresis temporal
+
+---
+
+## Reconstrucción Cinemática
+
+Incluye:
+
+- Sensor Fusion (Madgwick)
+- Rotación al marco global
+- Compensación gravitacional
+- ZUPT tridimensional
+- Integración XYZ
+- Estimación de trayectoria espacial
+
+---
+
+# Tecnologías Utilizadas
+
+## Deep Learning
+
+- PyTorch
+- NumPy
+- SciPy
+
+## Ingeniería
+
+- Pydantic
+- Pytest
+- Logging
+- Type Hinting
+
+## Biomecánica
+
+- IMUs
+- FFT
+- Sensor Fusion
+- ZUPT
+
+---
+
+# Calidad del Código
+
+El proyecto sigue:
+
+- PEP8
+- Tipado estricto
+- Programación orientada a objetos
+- Modularidad corporativa
+- Testing unitario
+
+---
+
+# Roadmap
+
+## Completado
+
+- [x] Pipeline extracción de datos
+- [x] Clasificación Marcha vs Reposo
+- [x] Arquitectura híbrida Tiempo/Frecuencia
+- [x] Refactorización completa PEP8
+- [x] Tests unitarios (`pytest`)
+- [x] Pipeline cinemático 3D
+- [x] Integración IMU + presión plantar
+
+---
+
+## Próximas Fases
+
+- [ ] Regresor Clínico EDSS
+- [ ] Integración TabTransformer
+- [ ] MLP-Mixer clínico
+- [ ] Fusión con variables cognitivas
+
+---
+
+# Objetivo Clínico Final
+
+Utilizar biomarcadores biomecánicos derivados de la marcha para estimar automáticamente:
+
+```text
+EDSS (Expanded Disability Status Scale)
+```
+
+en pacientes con **Esclerosis Múltiple**, integrando:
+
+- Señales IMU
+- Presión plantar
+- Variables demográficas
+- Variables cognitivas
+
+---
+
+# Autor
+
+```text
+Jairo Eduardo Paez Leal
+Máster en Ingeniería de Organización
+Universidad Politécnica de Madrid (UPM)
+```
+
+---
+
+
