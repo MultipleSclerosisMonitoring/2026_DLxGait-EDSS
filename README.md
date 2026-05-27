@@ -25,7 +25,16 @@ El sistema implementa:
 
 # Instalación
 
-## 1. Crear entorno virtual
+## 1. Clonar repositorio
+
+```bash
+git clone https://github.com/MultipleSclerosisMonitoring/2026_DLxGait-EDSS.git
+cd 2026_DLxGait-EDSS
+```
+
+---
+
+## 2. Crear entorno virtual
 
 ```bash
 conda create -n tfm python=3.10
@@ -34,7 +43,7 @@ conda activate tfm
 
 ---
 
-## 2. Instalar dependencias
+## 3. Instalar dependencias
 
 ### Instalación editable (recomendada)
 
@@ -60,12 +69,23 @@ pip install ahrs
 
 # Configuración de InfluxDB
 
-El config.yaml no contiene credenciales reales.
+El `config.yaml` no contiene credenciales reales.
 
 Antes de ejecutar cualquier pipeline, edite el archivo:
 
 ```text
 A01_EXTRACCION_DATOS/config.yaml
+```
+
+Ejemplo:
+
+```yaml
+influxdb:
+  url: "https://YOUR_SERVER:8086/"
+  org: "YOUR_ORG"
+  bucket: "YOUR_BUCKET"
+  token: "YOUR_TOKEN"
+  tzval: "Europe/Madrid"
 ```
 
 ---
@@ -88,7 +108,63 @@ python A04_TRANSFORMER/Agnostic_evaluator.py
 
 ---
 
-## Pipeline de Reconstrucción Cinemática
+# Compatibilidad y reproducibilidad
+
+El proyecto fue refactorizado para garantizar compatibilidad entre distintos entornos de ejecución y evitar dependencias implícitas de rutas locales.
+
+Se incorporaron las siguientes mejoras:
+
+- Empaquetado editable mediante `setup.py`
+- Resolución agnóstica de rutas (`Path(__file__)`)
+- Compatibilidad equivalente entre:
+
+```bash
+python -m ...
+```
+
+y
+
+```bash
+python script.py
+```
+
+- Eliminación de dependencias de rutas absolutas locales
+- Mejora de portabilidad para clonación limpia del repositorio
+
+Estas modificaciones permiten ejecutar el pipeline correctamente en entornos nuevos tras un clonado limpio del repositorio.
+
+---
+
+# Ejemplo de inferencia agnóstica
+
+```bash
+python A04_TRANSFORMER\Agnostic_evaluator.py ^
+-c A01_EXTRACCION_DATOS\config.yaml ^
+-m A05_MODELOS_ENTRENADOS ^
+-r PACIENTE_001 ^
+--start "2025-01-01 10:00:00" ^
+--end "2025-01-01 10:05:00" ^
+-o resultado_agnostic.csv
+```
+
+El sistema:
+
+1. Recupera señales desde InfluxDB
+2. Alinea ambas extremidades
+3. Genera espectrogramas híbridos
+4. Ejecuta inferencia continua
+5. Exporta probabilidades y predicciones en CSV
+
+Ejemplo de salida:
+
+```csv
+timestamp,prob_hybrid,pred_hybrid,prob_smoothed,pred_final_smoothed
+2025-12-24 10:53:35.866,0.9999752044677734,1,0.9999757289886475,1
+```
+
+---
+
+# Pipeline de Reconstrucción Cinemática
 
 El pipeline biomecánico puede ejecutarse mediante:
 
@@ -278,7 +354,7 @@ El proyecto sigue:
 - PEP8
 - Tipado estricto
 - Programación orientada a objetos
-- Modularidad 
+- Modularidad
 - Testing unitario
 
 ---
@@ -294,10 +370,12 @@ El proyecto sigue:
 - [x] Tests unitarios (`pytest`)
 - [x] Pipeline cinemático 3D
 - [x] Integración IMU + presión plantar
-- [x] Implementación de reconstrucción cinemática 3D basada en IMUs.
-- [x] Implementación de compensación gravitacional y orientación global.
-- [x] Implementación de Zero Velocity Update (ZUPT) tridimensional.
-- [x] Extracción de métricas biomecánicas espaciales y temporales.
+- [x] Implementación de reconstrucción cinemática 3D basada en IMUs
+- [x] Implementación de compensación gravitacional y orientación global
+- [x] Implementación de Zero Velocity Update (ZUPT) tridimensional
+- [x] Extracción de métricas biomecánicas espaciales y temporales
+- [x] Compatibilidad multiplataforma mediante empaquetado editable
+- [x] Ejecución reproducible tras clonación limpia del repositorio
 
 ---
 
