@@ -13,7 +13,6 @@ Este repositorio contiene la arquitectura de extremo a extremo (*end-to-end*) pa
 
 Cree y active un entorno virtual. Para garantizar la correcta resolución de paquetes e *imports* desde cualquier directorio, instale el proyecto en modo editable:
 
-Aquí tienes el texto con el formato Markdown perfecto, con los bloques de código separados del texto para que lo copies y pegues directamente en tu README.md:
 
 Markdown
 
