@@ -9,56 +9,60 @@ Este repositorio contiene la arquitectura de extremo a extremo (*end-to-end*) pa
 
 ---
 
-# Instalación
+## Instalación y Configuración
 
-Cree y active un entorno virtual y, posteriormente, instale el proyecto en modo editable:
+Cree y active un entorno virtual. Para garantizar la correcta resolución de paquetes e *imports* desde cualquier directorio, instale el proyecto en modo editable:
+
+Aquí tienes el texto con el formato Markdown perfecto, con los bloques de código separados del texto para que lo copies y pegues directamente en tu README.md:
+
+Markdown
 
 ```bash
 pip install -e .
-```
-
 Alternativamente, las dependencias también pueden instalarse mediante:
 
-```bash
+Bash
 pip install -r requirements.txt
-```
+Autenticación de Base de Datos (InfluxDB)
+El proyecto utiliza InfluxDB v2, que requiere autenticación obligatoria mediante Token. Por motivos de seguridad, el repositorio incluye una plantilla.
 
-# Uso
+Antes de ejecutar los procesos de extracción, edite el archivo A01_EXTRACCION_DATOS/.config.yaml y sustituya el campo token por sus credenciales locales reales:
 
-Los scripts deben ejecutarse como módulos Python desde la raíz del repositorio.
+YAML
+influxdb:
+  bucket: "Gait/autogen"
+  org: "UPM"
+  token: "SU_TOKEN_REAL_AQUI"  # <-- SUSTITUIR POR SU TOKEN
+  url: "https://localhost:8086/"  # <-- AJUSTAR IP SI ES NECESARIO
+Uso
+Gracias al empaquetado del proyecto (setup.py), ambos modos de ejecución son totalmente equivalentes y válidos. Puede lanzar los scripts desde la raíz del repositorio de las siguientes formas:
 
-Ejemplo:
-
-```bash
+Bash
+# Opción 1: Ejecución como módulo
 python -m A04_TRANSFORMER.Agnostic_evaluator
-```
 
-No ejecute los scripts directamente mediante rutas relativas como:
-
-```bash
+# Opción 2: Ejecución mediante ruta relativa
 python A04_TRANSFORMER/Agnostic_evaluator.py
-```
+Arquitectura
+La arquitectura ha sido migrada a PyTorch para garantizar un flujo continuo y evitar el Data Leakage. El sistema se divide en tres enfoques modulares:
 
-ya que esto puede provocar errores en la resolución de imports y paquetes Python.
+Rama Temporal (Transformer Encoder):
 
+Captura dependencias secuenciales a largo plazo en los datos crudos del giroscopio y acelerómetro.
 
----
+Utiliza Multi-Head Attention para identificar patrones anómalos de la marcha en el dominio del tiempo.
 
-## Arquitectura 
+Rama Frecuencial (FFT - Multi-Layer Perceptron):
 
-La arquitectura ha sido migrada a **PyTorch** para garantizar un flujo continuo y evitar el *Data Leakage*. El sistema se divide en tres enfoques modulares:
+Transforma las ventanas temporales mediante la Transformada Rápida de Fourier (RFFT).
 
-1. **Rama Temporal (Transformer Encoder):** * Captura dependencias secuenciales a largo plazo en los datos crudos del giroscopio y acelerómetro.
-   * Utiliza *Multi-Head Attention* para identificar patrones anómalos de la marcha en el dominio del tiempo.
-2. **Rama Frecuencial (FFT - Multi-Layer Perceptron):**
-   * Transforma las ventanas temporales mediante la Transformada Rápida de Fourier (RFFT).
-   * Aísla las micro-frecuencias generadas por impactos instantáneos (apoyado en la justificación biomecánica de *Müller et al., 2021*).
-3. **Modelo Híbrido (Early Fusion):**
-   * Concatena los espacios latentes de ambas ramas (Tiempo + Frecuencia) antes del cabezal de clasificación, logrando una inferencia altamente robusta.
+Aísla las micro-frecuencias generadas por impactos instantáneos (apoyado en la justificación biomecánica de Müller et al., 2021).
 
-*La validación inter-sujeto se garantiza mediante `StratifiedGroupKFold`.*
+Modelo Híbrido (Early Fusion):
 
----
+Concatena los espacios latentes de ambas ramas (Tiempo + Frecuencia) antes del cabezal de clasificación, logrando una inferencia altamente robusta.
+
+La validación inter-sujeto se garantiza mediante StratifiedGroupKFold.
 
 Roadmap (Próximos Pasos)
 [x] Fase 1-4: Pipeline de extracción y clasificación robusta Marcha vs. Reposo.
