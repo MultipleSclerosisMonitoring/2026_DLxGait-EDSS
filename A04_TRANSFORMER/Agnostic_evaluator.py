@@ -24,8 +24,9 @@ import torch
 from scipy.fft import rfft
 
 # =========================================================
-# IMPORTS DEL PROYECTO
+# IMPORTS DEL PROYECTO REFACTORIZADO
 # =========================================================
+
 from A01_EXTRACCION_DATOS.extract_data_plus import (
     cInfluxDB,
     SignalAligner,
@@ -49,42 +50,36 @@ from A04_TRANSFORMER.AA_TRANSFORMER_V1 import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-
 # =========================================================
-# MOTOR EVALUACION CONTINUA
+# MOTOR DE EVALUACION CONTINUA
 # =========================================================
 class AgnosticEvaluator:
     """Deploys end-to-end continuous inference over an isolated time interval."""
 
     def __init__(self, config_path: Path, model_dir: Path) -> None:
         """Inicializa entorno y carga artefactos."""
-        self.model_dir = model_dir.resolve()
-        logger.info(f"MODEL DIRECTORY: {self.model_dir}")
-
+        self.model_dir = model_dir
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         logger.info(f"DEVICE DETECTED: {self.device}")
 
-        # INICIALIZAR CLIENTE CONFIG
+        # 1. CLIENTE Y CONFIGURACION PYDANTIC
         self.client = cInfluxDB(config_path=str(config_path))
         yaml_cfg = load_param_config(config_path)
         params_dict = yaml_cfg.get('params', yaml_cfg)
         self.extraction_params = ExtractionParams(**params_dict)
 
-        # CARGAR ESCALADOR DATOS
-        scaler_path = self.model_dir / "scaler_gait.joblib"
-        logger.info(f"BUSCANDO SCALER EN: {scaler_path}")
-        if not scaler_path.exists():
-            raise FileNotFoundError(f"Scaler not found at: {scaler_path}")
+        # 2. CARGAR ESCALADOR
+        scaler_path = model_dir / "scaler_gait.joblib"
+        if not scaler_path.exists(): raise FileNotFoundError("Scaler not found")
         self.scaler = joblib.load(scaler_path)
 
-        # CARGAR CONFIG TRANSFORMER
-        cfg_path = self.model_dir / "transformer_config.joblib"
-        if not cfg_path.exists():
-            raise FileNotFoundError("Transformer config missing")
+        # 3. CARGAR CONFIGURACION TRANSFORMER
+        cfg_path = model_dir / "transformer_config.joblib"
+        if not cfg_path.exists(): raise FileNotFoundError("Transformer config missing")
         self.t_cfg = TransformerConfig(**joblib.load(cfg_path))
         logger.info("TRANSFORMER CONFIGURATION LOADED")
 
-        # INICIALIZAR REDES NEURONALES
+        # 4. INICIALIZAR REDES
         self._init_models()
 
     def _init_models(self) -> None:
@@ -106,7 +101,7 @@ class AgnosticEvaluator:
         self.model_hybrid.eval()
         logger.info("TODOS LOS MODELOS CARGADOS (TIEMPO, FFT, HIBRIDO)")
 
-        # CARGAR UMBRAL CALIBRACION
+        # CARGAR THRESHOLD Y CALIBRACION TERMICA
         self.threshold = joblib.load(self.model_dir / "optimal_threshold_hibrido.joblib")
         try:
             self.temperature = joblib.load(self.model_dir / "optimal_temperature_hibrido.joblib")
@@ -121,7 +116,7 @@ class AgnosticEvaluator:
         raw_data_by_foot: Dict[str, pd.DataFrame] = {}
         freq_target = self.extraction_params.freq_target_hz
 
-        # CONSULTAR INFLUX DB
+        # CONSULTAR INFLUXDB
         for foot in FEET:
             logger.info(f"CONSULTANDO PIE: {foot}")
             df = self.client.query_data(start, end, reference, foot)
@@ -138,14 +133,12 @@ class AgnosticEvaluator:
 
         common_start = max(df.index.min() for df in raw_data_by_foot.values())
         common_end = min(df.index.max() for df in raw_data_by_foot.values())
-        
-        if common_start >= common_end:
-            raise ValueError("INTERVALO TEMPORAL INVALIDO.")
+        if common_start >= common_end: raise ValueError("INTERVALO TEMPORAL INVALIDO.")
 
         target_idx = pd.date_range(start=common_start, end=common_end, freq=pd.Timedelta(seconds=1/freq_target), name="_time")
         aligned_data: Dict[str, pd.DataFrame] = {}
 
-        # ALINEAR SEÑALES FISICAS
+        # ALINEACION FISICA
         for foot, df_raw in raw_data_by_foot.items():
             logger.info(f"ALINEANDO PIE: {foot}")
             df_resampled = SignalAligner.uniform_timebase(df_raw, freq_target, target_idx_override=target_idx)
@@ -159,9 +152,9 @@ class AgnosticEvaluator:
     def run_inference(self, aligned_data: Dict[str, pd.DataFrame], start: datetime) -> pd.DataFrame:
         """Computes PSD Spectrograms and runs rolling window inference."""
         logger.info("EXTRAYENDO ESPECTROGRAMAS PARA INFERENCIA CONTINUA...")
-        lfeat = ['acc_mag', 'gyro_mag', 'S0', 'S1', 'S2']
+        lfeat = ['acc_mag','gyro_mag','S0','S1','S2']
         
-        # EXTRAER CARACTERISTICAS MODELO
+        # EXTRACCION USANDO LA CLASE REFACTORIZADA
         extractor = GaitFeatureExtractor(params=self.extraction_params, lfeat=lfeat)
         tensors = extractor.process_interval(aligned_data)
         
@@ -172,7 +165,7 @@ class AgnosticEvaluator:
         tensor_r = tensors["Right"][0]
         t_frames = tensors["Left"][1] 
 
-        # EMPAREJAR LONGITUDES TENSORES
+        # EMPAREJAR LONGITUDES
         min_len = min(tensor_l.shape[1], tensor_r.shape[1])
         tensor_all = np.vstack([tensor_l[:, :min_len], tensor_r[:, :min_len]]).T 
 
@@ -188,24 +181,24 @@ class AgnosticEvaluator:
         
         logger.info(f"INICIANDO VENTANA DESLIZANTE SOBRE {len(df_specs)} FRAMES")
 
-        # INICIAR BUCLE INFERENCIA
+        # BUCLE DE INFERENCIA
         for i in range(0, len(df_specs) - seq_len + 1):
             window = df_specs.iloc[i : i + seq_len].values 
             current_time = df_specs.index[i + (seq_len // 2)] 
 
-            # ESCALAR DATOS VENTANA
+            # ESCALADO
             flat_scaled = self.scaler.transform(window)
             x_time_np = np.expand_dims(flat_scaled, axis=0).astype(np.float32)
 
-            # CALCULAR FFT INTERNO
+            # CALCULO FFT INTERNO
             x_fft_np = np.abs(rfft(x_time_np, axis=1))
             x_fft_np = (x_fft_np / x_time_np.shape[1]).astype(np.float32).reshape(1, -1)
 
-            # CARGAR DATOS DISPOSITIVO
+            # CARGA A DISPOSITIVO
             x_time_tensor = torch.from_numpy(x_time_np).to(self.device)
             x_fft_tensor = torch.from_numpy(x_fft_np).to(self.device)
 
-            # PREDECIR MODELO HIBRIDO
+            # PREDICCION CON TEMPERATURE SCALING
             with torch.no_grad():
                 out_hybrid_logits = self.model_hybrid(x_time_tensor, x_fft_tensor)
                 prob_hybrid = torch.softmax(out_hybrid_logits / self.temperature, dim=1)[0, 1].item()
@@ -222,7 +215,7 @@ class AgnosticEvaluator:
 
         self.client.close()
 
-        # SUAVIZAR RESULTADOS HISTERESIS
+        # SUAVIZADO POR HISTERESIS
         if results_log:
             df_res = pd.DataFrame(results_log)
             df_res['prob_smoothed'] = df_res['prob_hybrid'].rolling(window=10, min_periods=1, center=True).mean()
@@ -231,9 +224,8 @@ class AgnosticEvaluator:
         
         return pd.DataFrame()
 
-
 # =========================================================
-# ENTRYPOINT CLI PRINCIPAL
+# ENTRYPOINT CLI
 # =========================================================
 def main() -> None:
     """Punto de entrada ejecutable."""
@@ -273,7 +265,6 @@ def main() -> None:
     except Exception as e:
         logger.critical(f"FALLO EN EVALUACION AGNOSTICA: {e}")
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()
