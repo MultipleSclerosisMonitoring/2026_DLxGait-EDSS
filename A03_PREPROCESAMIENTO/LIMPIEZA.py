@@ -101,7 +101,7 @@ class ExperimentAuditor:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         meta_path = self.output_dir / f"prep_metadata_{exp_hash[:8]}.json"
         with open(meta_path, "w", encoding="utf-8") as fh:
-            json.dump(metadata, fh, indent=4, ensure_ascii=False)
+            json.dump(metadata, fh, indent=4, ensure_ascii=False, default=str)
 
         logger.info(f"SNAPSHOT GUARDADO: {meta_path.name}")
         return metadata
