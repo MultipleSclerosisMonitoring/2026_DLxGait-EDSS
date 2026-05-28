@@ -510,11 +510,8 @@ Se recomienda utilizar la misma versión del entorno de entrenamiento para garan
 - [x] Pipeline robusto de extracción, reconstrucción biomecánica y clasificación de marcha
 - [x] Arquitectura Tiempo, Frecuencia e Híbrida
 - [x] Tests unitarios (`pytest`)
-- [x] Pipeline cinemático 3D
-- [x] Integración IMU + presión plantar
-- [x] Implementación de reconstrucción cinemática 3D basada en IMUs
-- [x] Implementación de compensación gravitacional y orientación global
-- [x] Implementación de Zero Velocity Update (ZUPT) tridimensional
+- [x] Pipeline de reconstrucción cinemática 3D mediante integración de señales IMU y presión plantar
+- [x] Corrección de deriva inercial mediante ZUPT tridimensional, compensación gravitacional y orientación global
 - [x] Extracción de métricas biomecánicas espaciales y temporales
 - [x] Compatibilidad multiplataforma mediante empaquetado editable
 - [x] Ejecución reproducible tras clonación limpia del repositorio
