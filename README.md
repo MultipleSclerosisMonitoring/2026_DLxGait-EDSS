@@ -508,8 +508,7 @@ Se recomienda utilizar la misma versión del entorno de entrenamiento para garan
 
 - [x] Pipeline extracción de datos
 - [x] Pipeline robusto de extracción, reconstrucción biomecánica y clasificación de marcha
-- [x] Arquitectura híbrida Tiempo/Frecuencia
-- [x] Refactorización completa PEP8
+- [x] Arquitectura Tiempo, Frecuencia e Híbrida
 - [x] Tests unitarios (`pytest`)
 - [x] Pipeline cinemático 3D
 - [x] Integración IMU + presión plantar
@@ -519,9 +518,7 @@ Se recomienda utilizar la misma versión del entorno de entrenamiento para garan
 - [x] Extracción de métricas biomecánicas espaciales y temporales
 - [x] Compatibilidad multiplataforma mediante empaquetado editable
 - [x] Ejecución reproducible tras clonación limpia del repositorio
-- [x] Inferencia continua híbrida Tiempo/Frecuencia
-- [x] Compatibilidad automática con formatos ISO 8601
-- [x] Simplificación de inferencia agnóstica mediante identificador de paciente
+- [x] Refactorización completa PEP8
 
 ---
 
