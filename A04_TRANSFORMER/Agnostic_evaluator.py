@@ -240,6 +240,9 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
+        start_dt = datetime.fromisoformat(args.start.replace('Z', '+00:00'))
+        end_dt = datetime.fromisoformat(args.end.replace('Z', '+00:00'))
+    except ValueError:
         start_dt = datetime.strptime(args.start, "%Y-%m-%d %H:%M:%S")
         end_dt = datetime.strptime(args.end, "%Y-%m-%d %H:%M:%S")
     except ValueError as e:
