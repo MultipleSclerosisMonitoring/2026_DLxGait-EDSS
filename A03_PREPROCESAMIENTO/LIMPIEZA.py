@@ -307,5 +307,5 @@ def main() -> None:
 if __name__ == "__main__":
     main()
     main()
-    archiver = GaitDataArchiver(cfg)
+    archiver = GaitDataArchiver(args)
     archiver.run_pipeline()
