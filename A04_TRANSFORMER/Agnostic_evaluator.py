@@ -240,14 +240,31 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
-        start_dt = datetime.fromisoformat(args.start.replace('Z', '+00:00'))
-        end_dt = datetime.fromisoformat(args.end.replace('Z', '+00:00'))
-    except ValueError:
-        start_dt = datetime.strptime(args.start, "%Y-%m-%d %H:%M:%S")
-        end_dt = datetime.strptime(args.end, "%Y-%m-%d %H:%M:%S")
-    except ValueError as e:
-        logger.critical(f"ERROR FORMATO FECHA: {e}")
-        sys.exit(1)
+    # Intentar ISO 8601
+        start_dt = datetime.fromisoformat(
+            args.start.replace("Z", "+00:00")
+        ).replace(tzinfo=None)
+
+        end_dt = datetime.fromisoformat(
+            args.end.replace("Z", "+00:00")
+        ).replace(tzinfo=None)
+
+    except Exception:
+        try:
+            # Intentar formato clásico
+            start_dt = datetime.strptime(
+                args.start,
+                "%Y-%m-%d %H:%M:%S"
+            )
+
+            end_dt = datetime.strptime(
+                args.end,
+                "%Y-%m-%d %H:%M:%S"
+        )
+
+        except Exception as e:
+            logger.critical(f"ERROR FORMATO FECHA: {e}")
+            sys.exit(1)
 
     logger.info(f"INICIANDO EVALUACION AGNOSTICA: {args.reference}")
 
@@ -272,4 +289,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
