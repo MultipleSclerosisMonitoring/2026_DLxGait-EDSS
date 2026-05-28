@@ -20,6 +20,9 @@ El sistema implementa:
 - Detección de eventos de marcha
 - Modelado profundo mediante PyTorch
 - Inferencia híbrida Tiempo + Frecuencia
+- Inferencia continua sobre flujos biomecánicos
+- Generación automática de espectrogramas híbridos
+- Clasificación multimodal basada en Transformer + FFT
 
 ---
 
@@ -69,7 +72,7 @@ pip install ahrs
 
 # Configuración de InfluxDB
 
-El `config.yaml` no contiene credenciales reales.
+El archivo `config.yaml` no contiene credenciales reales.
 
 Antes de ejecutar cualquier pipeline, edite el archivo:
 
@@ -130,32 +133,126 @@ python script.py
 
 - Eliminación de dependencias de rutas absolutas locales
 - Mejora de portabilidad para clonación limpia del repositorio
+- Compatibilidad multiplataforma
+- Ejecución reproducible tras clonado limpio
 
 Estas modificaciones permiten ejecutar el pipeline correctamente en entornos nuevos tras un clonado limpio del repositorio.
 
 ---
 
-# Ejemplo de inferencia agnóstica
+# Manual de Operaciones — Inferencia Continua (Agnostic Evaluator)
 
-```bash
-python A04_TRANSFORMER\Agnostic_evaluator.py ^
--c A01_EXTRACCION_DATOS\config.yaml ^
--m A05_MODELOS_ENTRENADOS ^
--r PACIENTE_001 ^
---start "2025-01-01 10:00:00" ^
---end "2025-01-01 10:05:00" ^
--o resultado_agnostic.csv
-```
+## Descripción
+
+Módulo encargado de realizar inferencias continuas sobre flujos de datos biomecánicos provenientes de InfluxDB.
 
 El sistema:
 
-1. Recupera señales desde InfluxDB
+1. Recupera señales biomecánicas desde InfluxDB
 2. Alinea ambas extremidades
 3. Genera espectrogramas híbridos
 4. Ejecuta inferencia continua
 5. Exporta probabilidades y predicciones en CSV
 
-Ejemplo de salida:
+---
+
+## Cambios recientes
+
+### Flexibilidad en formatos de fecha
+
+El evaluador admite de forma nativa dos formatos para los argumentos:
+
+```text
+--start
+--end
+```
+
+### Formato ISO 8601 (recomendado para InfluxDB)
+
+```text
+YYYY-MM-DDTHH:MM:SSZ
+```
+
+Ejemplo:
+
+```text
+2025-12-24T10:53:30Z
+```
+
+### Formato tradicional
+
+```text
+YYYY-MM-DD HH:MM:SS
+```
+
+Ejemplo:
+
+```text
+2025-12-24 10:53:30
+```
+
+El sistema detecta automáticamente el formato proporcionado.
+
+---
+
+### Simplificación del argumento `-r`
+
+El parámetro:
+
+```bash
+-r / --reference
+```
+
+ahora recibe únicamente el identificador del paciente/segmento:
+
+```text
+CODIGO_PACIENTE
+```
+
+eliminando la necesidad de especificar rutas completas hacia archivos Excel.
+
+---
+
+# Ejemplo de inferencia agnóstica
+
+## Ejemplo usando formato ISO 8601
+
+```bash
+python A04_TRANSFORMER\Agnostic_evaluator.py ^
+-c A01_EXTRACCION_DATOS\config.yaml ^
+-m A05_MODELOS_ENTRENADOS ^
+-r CODIGO_PACIENTE ^
+--start "2025-12-24T10:53:30Z" ^
+--end "2025-12-24T10:58:18Z"
+```
+
+## Ejemplo usando formato tradicional
+
+```bash
+python A04_TRANSFORMER\Agnostic_evaluator.py ^
+-c A01_EXTRACCION_DATOS\config.yaml ^
+-m A05_MODELOS_ENTRENADOS ^
+-r CODIGO_PACIENTE ^
+--start "2025-12-24 10:53:30" ^
+--end "2025-12-24 10:58:18"
+```
+
+---
+
+## Parámetros
+
+| Parámetro | Descripción |
+|---|---|
+| `-c` | Ruta al archivo `config.yaml` |
+| `-m` | Directorio de modelos entrenados |
+| `-r` | Identificador del sujeto de estudio |
+| `--start` | Inicio del intervalo temporal |
+| `--end` | Fin del intervalo temporal |
+| `-o` | Archivo CSV de salida |
+
+---
+
+## Ejemplo de salida
 
 ```csv
 timestamp,prob_hybrid,pred_hybrid,prob_smoothed,pred_final_smoothed
@@ -170,7 +267,7 @@ El pipeline biomecánico puede ejecutarse mediante:
 
 ```bash
 python run_pipeline.py ^
---paciente PACIENTE_001 ^
+--paciente CODIGO_PACIENTE ^
 --inicio "2025-01-01 10:00:00" ^
 --fin "2025-01-01 10:10:00" ^
 --out resultados.csv
@@ -359,6 +456,52 @@ El proyecto sigue:
 
 ---
 
+# Troubleshooting
+
+## Error de formato de fecha
+
+Si recibe errores relacionados con fechas:
+
+- Verifique que no existan espacios extra
+- Compruebe que las fechas ISO incluyan:
+
+```text
+T
+```
+
+y
+
+```text
+Z
+```
+
+Ejemplo correcto:
+
+```text
+2025-12-24T10:53:30Z
+```
+
+El sistema intentará:
+
+1. Parseo ISO 8601
+2. Fallback automático al formato tradicional
+
+---
+
+## Warning de Scikit-learn
+
+Mensajes como:
+
+```text
+InconsistentVersionWarning
+```
+
+indican diferencias entre versiones de `scikit-learn` utilizadas al entrenar y cargar modelos.
+
+Se recomienda utilizar la misma versión del entorno de entrenamiento para garantizar reproducibilidad completa.
+
+---
+
 # Roadmap
 
 ## Completado
@@ -376,6 +519,9 @@ El proyecto sigue:
 - [x] Extracción de métricas biomecánicas espaciales y temporales
 - [x] Compatibilidad multiplataforma mediante empaquetado editable
 - [x] Ejecución reproducible tras clonación limpia del repositorio
+- [x] Inferencia continua híbrida Tiempo/Frecuencia
+- [x] Compatibilidad automática con formatos ISO 8601
+- [x] Simplificación de inferencia agnóstica mediante identificador de paciente
 
 ---
 
