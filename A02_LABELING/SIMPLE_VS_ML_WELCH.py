@@ -192,7 +192,7 @@ class RobustComparator:
         print("Matriz de Confusión (Random Forest):")
         print(confusion_matrix(y_data, y_pred_cv))
         print("\nReporte de Clasificación:")
-        print(classification_report(y_data, y_pred_cv, target_names=["No Marcha (0)", "Marcha (1)"]))
+        print(classification_report(y_data, y_pred_cv, labels=[0, 1], target_names=["No Marcha (0)", "Marcha (1)"], zero_division=0))
 
         # GUARDAR GRAFICO DISPERSION
         self._plot_results(x_data, y_data, y_pred_cv)
