@@ -18,7 +18,7 @@ import json
 import hashlib
 import subprocess
 import platform
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Tuple, Dict, Any
 from pydantic import BaseModel, DirectoryPath, Field
@@ -90,7 +90,7 @@ class ExperimentAuditor:
         # EMPAQUETAR METADATA
         metadata = {
             "experiment_hash": exp_hash,
-            "timestamp_utc": datetime.utcnow().isoformat(),
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "git_commit": git_commit,
             "python_version": platform.python_version(),
             "platform": platform.platform(),
