@@ -509,10 +509,11 @@ Se recomienda utilizar la misma versión del entorno de entrenamiento para garan
 - [x] Pipeline extracción de datos
 - [x] Pipeline robusto de extracción, reconstrucción biomecánica y clasificación de marcha
 - [x] Arquitectura Tiempo, Frecuencia e Híbrida
-- [x] Tests unitarios (`pytest`)
 - [x] Pipeline de reconstrucción cinemática 3D mediante integración de señales IMU y presión plantar
 - [x] Corrección de deriva inercial mediante ZUPT tridimensional, compensación gravitacional y orientación global
 - [x] Extracción de métricas biomecánicas espaciales y temporales
+- [x] Evaluación Agnóstica
+- [x] Tests unitarios (pytest)
 - [x] Compatibilidad multiplataforma mediante empaquetado editable
 - [x] Ejecución reproducible tras clonación limpia del repositorio
 - [x] Refactorización completa PEP8
