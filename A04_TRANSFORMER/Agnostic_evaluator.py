@@ -201,14 +201,17 @@ class AgnosticEvaluator:
 
             # PREDICCION 
             with torch.no_grad():
-                out_hybrid_logits = self.model_hybrid(x_time_tensor, x_fft_tensor)
-                prob_hybrid = torch.softmax(out_hybrid_logits, dim=1)[0, 1].item()
-                pred_hybrid = int(prob_hybrid >= self.threshold)
+
+                #FFT
+                
+                out_fft_logits = self.model_fft(x_fft_tensor)
+                prob_fft = torch.softmax(out_fft_logits, dim=1)[0, 1].item()
+                pred_fft = int(prob_fft >= 0.09)
 
             results_log.append({
                 "timestamp": current_time.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
-                "prob_hybrid": prob_hybrid,
-                "pred_hybrid": pred_hybrid
+                "prob_fft": prob_fft,
+                "pred_fft": pred_fft
             })
 
             if i % 50 == 0:
