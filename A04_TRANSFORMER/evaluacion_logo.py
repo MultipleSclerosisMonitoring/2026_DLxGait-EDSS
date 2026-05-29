@@ -1,22 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Evaluación extra de modelos entrenados.
+Evaluación global de modelos entrenados.
 
-Este script:
-
-- Carga modelos .pth ya entrenados
-- Carga scaler existente
-- Reutiliza arquitectura original
-- Genera nuevos folds de evaluación
-- Ejecuta SOLO inferencia
-
-Compatible con:
-- Transformer
-- FFT
-- Modelo Híbrido
-
-Autor:
-Jairo Eduardo Paez Leal
+Calcula umbrales globales precisos agregando predicciones
+Out-Of-Fold (OOF) para maximizar la generalización.
 """
 
 from __future__ import annotations
@@ -24,137 +11,84 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
-from typing import Tuple, Dict, List
+from typing import Tuple, Dict, List, Optional
 
 import h5py
 import joblib
 import numpy as np
 import torch
 import torch.nn as nn
-
 from scipy.fft import rfft
-
-from sklearn.metrics import (
-    roc_auc_score,
-    confusion_matrix,
-    roc_curve
-)
-
+from sklearn.metrics import roc_auc_score, confusion_matrix, roc_curve
 from sklearn.model_selection import LeaveOneGroupOut
 from sklearn.preprocessing import StandardScaler
-
 from torch.utils.data import TensorDataset, DataLoader
 
-# =========================================================
-# LOGGING
-# =========================================================
-
+# CONFIGURAR REGISTRO LOGS
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
-
 logger = logging.getLogger(__name__)
 
 # =========================================================
-# FFT
+# DEFINIR PROCESADOR FFT
 # =========================================================
 
 class FFTProcessor:
+    """Procesador estático de señales frecuenciales."""
 
     @staticmethod
-    def get_fft_features(
-        data: np.ndarray
-    ) -> np.ndarray:
+    def get_fft_features(data: np.ndarray) -> np.ndarray:
+        """
+        Aplica transformada rápida Fourier.
 
-        data_fft = np.abs(
-            rfft(data, axis=1)
-        )
-
-        return (
-            data_fft / data.shape[1]
-        ).astype(np.float32)
+        :param data: Matriz de entrada temporal.
+        :return: Características en dominio frecuencial.
+        """
+        data_fft = np.abs(rfft(data, axis=1))
+        return (data_fft / data.shape[1]).astype(np.float32)
 
 # =========================================================
-# TRANSFORMER
+# DEFINIR REDES NEURONALES
 # =========================================================
 
 class GaitTransformer(nn.Module):
+    """Modelo clasificador basado en atención."""
 
-    def __init__(
-        self,
-        input_dim: int,
-        max_len: int,
-        model_dim: int = 64,
-        nhead: int = 4,
-        num_layers: int = 2,
-        dropout: float = 0.3,
-        num_classes: int = 2
-    ) -> None:
-
+    def __init__(self, input_dim: int, max_len: int, model_dim: int = 64,
+                 nhead: int = 4, num_layers: int = 2, dropout: float = 0.3,
+                 num_classes: int = 2) -> None:
+        """Inicializa arquitectura del Transformer."""
         super().__init__()
-
-        self.embedding = nn.Linear(
-            input_dim,
-            model_dim
-        )
-
-        self.pos_embedding = nn.Parameter(
-            torch.zeros(
-                1,
-                max_len,
-                model_dim
-            )
-        )
-
+        self.embedding = nn.Linear(input_dim, model_dim)
+        self.pos_embedding = nn.Parameter(torch.zeros(1, max_len, model_dim))
+        
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=model_dim,
-            nhead=nhead,
-            dropout=dropout,
-            batch_first=True
+            d_model=model_dim, nhead=nhead, dropout=dropout, batch_first=True
         )
-
-        self.transformer = nn.TransformerEncoder(
-            encoder_layer,
-            num_layers=num_layers
-        )
-
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.classifier = nn.Sequential(
             nn.LayerNorm(model_dim),
             nn.Dropout(dropout),
             nn.Linear(model_dim, num_classes)
         )
 
-    def forward(
-        self,
-        x: torch.Tensor
-    ) -> torch.Tensor:
-
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Ejecuta pase frontal temporal."""
         x = self.embedding(x)
-
         seq_len = x.size(1)
-
         x = x + self.pos_embedding[:, :seq_len, :]
-
         x = self.transformer(x)
+        return self.classifier(x.mean(dim=1))
 
-        return self.classifier(
-            x.mean(dim=1)
-        )
-
-# =========================================================
-# FFT MODEL
-# =========================================================
 
 class FFTModel(nn.Module):
+    """Clasificador espectral directo."""
 
-    def __init__(
-        self,
-        input_dim: int
-    ) -> None:
-
+    def __init__(self, input_dim: int) -> None:
+        """Inicializa clasificador de frecuencias."""
         super().__init__()
-
         self.classifier = nn.Sequential(
             nn.Flatten(),
             nn.Linear(input_dim, 64),
@@ -164,32 +98,20 @@ class FFTModel(nn.Module):
             nn.Linear(64, 2)
         )
 
-    def forward(
-        self,
-        x: torch.Tensor
-    ) -> torch.Tensor:
-
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Ejecuta pase frontal frecuencial."""
         return self.classifier(x)
 
-# =========================================================
-# HYBRID MODEL
-# =========================================================
 
 class GaitHybridModel(nn.Module):
+    """Modelo de fusión multimodal."""
 
-    def __init__(
-        self,
-        transformer_model: nn.Module,
-        fft_input_dim: int,
-        model_dim: int = 64
-    ) -> None:
-
+    def __init__(self, transformer_model: nn.Module, fft_input_dim: int, model_dim: int = 64) -> None:
+        """Inicializa arquitectura combinada."""
         super().__init__()
-
         self.transformer_branch = transformer_model
-
         self.transformer_branch.classifier = nn.Identity()
-
+        
         self.fft_branch = nn.Sequential(
             nn.Flatten(),
             nn.Linear(fft_input_dim, 16),
@@ -197,508 +119,193 @@ class GaitHybridModel(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.4)
         )
-
+        
         self.fusion_head = nn.Sequential(
             nn.Linear(model_dim + 16, 32),
             nn.ReLU(),
             nn.Linear(32, 2)
         )
 
-    def forward(
-        self,
-        x_t: torch.Tensor,
-        x_f: torch.Tensor
-    ) -> torch.Tensor:
-
+    def forward(self, x_t: torch.Tensor, x_f: torch.Tensor) -> torch.Tensor:
+        """Ejecuta pase multimodal conjunto."""
         feat_t = self.transformer_branch(x_t)
-
         feat_f = self.fft_branch(x_f)
-
-        return self.fusion_head(
-            torch.cat(
-                (feat_t, feat_f),
-                dim=1
-            )
-        )
+        return self.fusion_head(torch.cat((feat_t, feat_f), dim=1))
 
 # =========================================================
-# LOAD DATASET
+# GESTION DE DATOS
 # =========================================================
 
-def load_h5_dataset(
-    h5_path: Path
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def load_h5_dataset(h5_path: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Carga registros del dataset binario.
 
-    x_list = []
-    y_list = []
-    groups = []
+    :param h5_path: Ruta del archivo HDF5.
+    :return: Tensores X, Y, y Grupos.
+    """
+    x_list, y_list, groups = [], [], []
 
     with h5py.File(h5_path, "r") as hf:
-
         for patient in hf.keys():
-
             for seg_chunk in hf[patient].keys():
-
                 for foot in hf[patient][seg_chunk].keys():
-
                     ds = hf[patient][seg_chunk][foot]
-
                     x_list.append(ds[:])
-
                     y_list.append(ds.attrs["label"])
-
-                    # SOLO PACIENTE
                     groups.append(patient)
 
-    return (
-        np.array(x_list),
-        np.array(y_list),
-        np.array(groups)
-    )
+    return np.array(x_list), np.array(y_list), np.array(groups)
 
 # =========================================================
-# THRESHOLD ROBUSTO
+# CALCULO METRICAS
 # =========================================================
 
-def find_optimal_threshold(
-    y_true: np.ndarray,
-    y_prob: np.ndarray
-) -> float:
+def find_optimal_threshold(y_true: np.ndarray, y_prob: np.ndarray) -> float:
+    """
+    Identifica límite óptimo global.
 
+    :param y_true: Etiquetas reales matriz.
+    :param y_prob: Probabilidades predichas vector.
+    :return: Valor numérico del umbral.
+    """
     if len(np.unique(y_true)) < 2:
-
-        logger.warning(
-            "SOLO UNA CLASE EN FOLD -> threshold=0.5"
-        )
-
         return 0.5
 
-    fpr, tpr, thresholds = roc_curve(
-        y_true,
-        y_prob
-    )
-
-    idx = np.argmax(
-        tpr - fpr
-    )
-
+    fpr, tpr, thresholds = roc_curve(y_true, y_prob)
+    idx = np.argmax(tpr - fpr)
     threshold = thresholds[idx]
 
-    # CONTROL NUMERICO
     if not np.isfinite(threshold):
-
-        logger.warning(
-            "THRESHOLD INVALIDO -> 0.5"
-        )
-
-        threshold = 0.5
+        return 0.5
 
     return float(threshold)
 
-# =========================================================
-# EVALUACION ROBUSTA
-# =========================================================
 
-def evaluate_model(
-    model,
-    loader,
-    device,
-    hybrid=False
-) -> Dict:
+def extract_predictions(model: nn.Module, loader: DataLoader, device: str, 
+                        is_hybrid: bool = False) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Genera predicciones continuas batch.
 
+    :param model: Red PyTorch activa.
+    :param loader: Generador datos iterables.
+    :param device: Hardware cálculo asignado.
+    :param is_hybrid: Bandera modelo doble.
+    :return: Vectores de etiquetas y probabilidades.
+    """
     model.eval()
-
-    y_true = []
-    y_prob = []
+    y_true, y_prob = [], []
 
     with torch.no_grad():
-
         for batch in loader:
-
-            if hybrid:
-
+            if is_hybrid:
                 xt, xf, yb = batch
-
-                out = model(
-                    xt.to(device),
-                    xf.to(device)
-                )
-
+                out = model(xt.to(device), xf.to(device))
             else:
-
                 xb, yb = batch
+                out = model(xb.to(device))
 
-                out = model(
-                    xb.to(device)
-                )
+            probs = torch.softmax(out, dim=1)[:, 1]
+            y_true.extend(yb.numpy())
+            y_prob.extend(probs.cpu().numpy())
 
-            probs = torch.softmax(
-                out,
-                dim=1
-            )[:, 1]
-
-            y_true.extend(
-                yb.numpy()
-            )
-
-            y_prob.extend(
-                probs.cpu().numpy()
-            )
-
-    y_true = np.array(y_true)
-    y_prob = np.array(y_prob)
-
-    # =========================================
-    # VALIDACION CLASES
-    # =========================================
-
-    if len(np.unique(y_true)) < 2:
-
-        logger.warning(
-            "FOLD OMITIDO: UNA SOLA CLASE"
-        )
-
-        return None
-
-    threshold = find_optimal_threshold(
-        y_true,
-        y_prob
-    )
-
-    y_pred = (
-        y_prob >= threshold
-    ).astype(int)
-
-    cm = confusion_matrix(
-        y_true,
-        y_pred,
-        labels=[0, 1]
-    )
-
-    tn, fp, fn, tp = cm.ravel()
-
-    sensitivity = (
-        tp / (tp + fn)
-        if (tp + fn) > 0
-        else 0.0
-    )
-
-    specificity = (
-        tn / (tn + fp)
-        if (tn + fp) > 0
-        else 0.0
-    )
-
-    auc = roc_auc_score(
-        y_true,
-        y_prob
-    )
-
-    return {
-        "AUC": auc,
-        "Sensitivity": sensitivity,
-        "Specificity": specificity,
-        "Threshold": threshold,
-        "ConfusionMatrix": cm
-    }
+    return np.array(y_true), np.array(y_prob)
 
 # =========================================================
-# MAIN
+# FLUJO PRINCIPAL EJECUCION
 # =========================================================
 
 def main() -> None:
-
+    """Función constructora orquestadora."""
     parser = argparse.ArgumentParser()
-
-    parser.add_argument(
-        "--dataset",
-        type=Path,
-        required=True
-    )
-
-    parser.add_argument(
-        "--models_dir",
-        type=Path,
-        default=Path(
-            "A05_MODELOS_ENTRENADOS"
-        )
-    )
-
+    parser.add_argument("--dataset", type=Path, required=True)
+    parser.add_argument("--models_dir", type=Path, default=Path("A05_MODELOS_ENTRENADOS"))
     args = parser.parse_args()
 
-    device = (
-        "cuda"
-        if torch.cuda.is_available()
-        else "cpu"
-    )
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    # CARGAR DATOS SISTEMA
+    x_all, y_all, groups_all = load_h5_dataset(args.dataset)
+    logger.info(f"DATASET CARGADO: {len(x_all)} MUESTRAS")
 
-    # =====================================================
-    # DATASET
-    # =====================================================
+    # APLICAR ESCALADOR ESTATICO
+    scaler: StandardScaler = joblib.load(args.models_dir / "scaler_gait.joblib")
+    x_scaled = scaler.transform(x_all.reshape(-1, x_all.shape[2])).reshape(x_all.shape)
 
-    logger.info(
-        "CARGANDO DATASET"
-    )
-
-    x_all, y_all, groups_all = load_h5_dataset(
-        args.dataset
-    )
-
-    logger.info(
-        f"Muestras: {len(x_all)}"
-    )
-
-    scaler: StandardScaler = joblib.load(
-        args.models_dir /
-        "scaler_gait.joblib"
-    )
-
-    x_scaled = scaler.transform(
-        x_all.reshape(
-            -1,
-            x_all.shape[2]
-        )
-    ).reshape(x_all.shape)
-
+    # EXTRAER RASGOS FRECUENCIALES
     fft_proc = FFTProcessor()
+    x_fft = fft_proc.get_fft_features(x_scaled)
+    fft_dim = x_fft.shape[1] * x_fft.shape[2]
 
-    x_fft = fft_proc.get_fft_features(
-        x_scaled
-    )
-
-    fft_dim = (
-        x_fft.shape[1] *
-        x_fft.shape[2]
-    )
-
-    input_dim = x_scaled.shape[2]
-
-    seq_len = x_scaled.shape[1]
-
-    # =====================================================
-    # LOAD MODELS
-    # =====================================================
-
-    logger.info(
-        "CARGANDO MODELOS"
-    )
-
-    transformer_model = GaitTransformer(
-        input_dim=input_dim,
-        max_len=seq_len
-    )
-
-    transformer_model.load_state_dict(
-        torch.load(
-            args.models_dir /
-            "modelo_transformer.pth",
-            map_location=device
-        )
-    )
-
-    transformer_model.to(device)
-
-    fft_model = FFTModel(
-        fft_dim
-    )
-
-    fft_model.load_state_dict(
-        torch.load(
-            args.models_dir /
-            "modelo_fft.pth",
-            map_location=device
-        )
-    )
-
+    # INICIALIZAR REDES CARGADAS
+    fft_model = FFTModel(fft_dim)
+    fft_model.load_state_dict(torch.load(args.models_dir / "modelo_fft.pth", map_location=device))
     fft_model.to(device)
 
-    hybrid_model = GaitHybridModel(
-        transformer_model=GaitTransformer(
-            input_dim=input_dim,
-            max_len=seq_len
-        ),
-        fft_input_dim=fft_dim
-    )
-
-    hybrid_model.load_state_dict(
-        torch.load(
-            args.models_dir /
-            "modelo_hibrido.pth",
-            map_location=device
-        )
-    )
-
-    hybrid_model.to(device)
-
-    logger.info(
-        "MODELOS CARGADOS CORRECTAMENTE"
-    )
-
-    # =====================================================
-    # LOGO
-    # =====================================================
-
+    # CONFIGURAR PARTICIONADOR LOGO
     logo = LeaveOneGroupOut()
-
-    aucs_h = []
-
+    global_y_true_fft, global_y_prob_fft = [], []
     valid_folds = 0
 
-    logger.info(
-        "INICIANDO EVALUACION LOGO"
-    )
+    logger.info("INICIANDO EXTRACCION OOF (FFT)")
 
-    for fold, (_, test_idx) in enumerate(
-
-        logo.split(
-            x_scaled,
-            y_all,
-            groups_all
-        ),
-
-        1
-    ):
-
-        logger.info(
-            f"FOLD {fold}"
-        )
-
-        x_test = x_scaled[test_idx]
-
+    # ITERAR EVALUACION CRUZADA
+    for fold, (_, test_idx) in enumerate(logo.split(x_scaled, y_all, groups_all), 1):
         y_test = y_all[test_idx]
 
-        # =========================================
-        # SALTAR FOLDS INVALIDOS
-        # =========================================
-
-        unique_classes = np.unique(y_test)
-
-        if len(unique_classes) < 2:
-
-            logger.warning(
-                f"FOLD {fold} OMITIDO -> "
-                f"UNA SOLA CLASE: {unique_classes}"
-            )
-
+        if len(np.unique(y_test)) < 2:
             continue
 
         x_test_fft = x_fft[test_idx]
-
-        hybrid_loader = DataLoader(
-
+        
+        # PREPARAR DATASET INDIVIDUAL
+        fft_loader = DataLoader(
             TensorDataset(
-
-                torch.from_numpy(
-                    x_test
-                ).float(),
-
-                torch.from_numpy(
-                    x_test_fft.reshape(
-                        x_test.shape[0],
-                        -1
-                    )
-                ).float(),
-
-                torch.from_numpy(
-                    y_test
-                ).long()
-
+                torch.from_numpy(x_test_fft.reshape(x_test_fft.shape[0], -1)).float(),
+                torch.from_numpy(y_test).long()
             ),
-
-            batch_size=64,
-            shuffle=False
+            batch_size=64, shuffle=False
         )
 
-        metrics = evaluate_model(
-            hybrid_model,
-            hybrid_loader,
-            device,
-            hybrid=True
-        )
-
-        if metrics is None:
-
-            continue
-
-        aucs_h.append(
-            metrics["AUC"]
-        )
-
+        # CAPTURAR PREDICCIONES PARCIALES
+        y_t, y_p = extract_predictions(fft_model, fft_loader, device, is_hybrid=False)
+        global_y_true_fft.extend(y_t)
+        global_y_prob_fft.extend(y_p)
+        
         valid_folds += 1
+        auc = roc_auc_score(y_t, y_p)
+        logger.info(f"FOLD {fold:02d} | AUC PARCIAL: {auc:.4f}")
 
-        print("\n")
-        print("=" * 60)
-        print(f"FOLD {fold}")
-        print("=" * 60)
+    # CALCULAR UMBRAL GLOBAL
+    y_true_all = np.array(global_y_true_fft)
+    y_prob_all = np.array(global_y_prob_fft)
+    
+    fft_threshold = find_optimal_threshold(y_true_all, y_prob_all)
+    
+    # GUARDAR ARTEFACTO DISCO
+    joblib.dump(fft_threshold, args.models_dir / "optimal_threshold_fft.joblib")
 
-        print(
-            f"AUC: {metrics['AUC']:.4f}"
-        )
+    # MOSTRAR RESUMEN LIMPIO
+    y_pred_all = (y_prob_all >= fft_threshold).astype(int)
+    cm = confusion_matrix(y_true_all, y_pred_all, labels=[0, 1])
+    tn, fp, fn, tp = cm.ravel()
+    
+    sens = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    spec = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+    auc_global = roc_auc_score(y_true_all, y_prob_all)
 
-        print(
-            f"SENSITIVITY: "
-            f"{metrics['Sensitivity']:.4f}"
-        )
-
-        print(
-            f"SPECIFICITY: "
-            f"{metrics['Specificity']:.4f}"
-        )
-
-        print(
-            f"THRESHOLD: "
-            f"{metrics['Threshold']:.4f}"
-        )
-
-        print("\nCONFUSION MATRIX:")
-
-        print(
-            metrics["ConfusionMatrix"]
-        )
-
-    # =====================================================
-    # FINAL
-    # =====================================================
-
-    print("\n")
-    print("=" * 60)
-    print("RESULTADO FINAL")
-    print("=" * 60)
-
-    print(
-        f"FOLDS VALIDOS: {valid_folds}"
-    )
-
-    if len(aucs_h) > 0:
-
-        print(
-            f"AUC PROMEDIO LOGO: "
-            f"{np.mean(aucs_h):.4f}"
-        )
-
-        print(
-            f"AUC STD LOGO: "
-            f"{np.std(aucs_h):.4f}"
-        )
-
-        print(
-            f"AUC MIN: "
-            f"{np.min(aucs_h):.4f}"
-        )
-
-        print(
-            f"AUC MAX: "
-            f"{np.max(aucs_h):.4f}"
-        )
-
-    else:
-
-        print(
-            "NO EXISTEN FOLDS VALIDOS"
-        )
-
-# =========================================================
+    print("\n" + "=" * 50)
+    print("METRICAS GLOBALES MODELO FFT (LOGO OOF)")
+    print("=" * 50)
+    print(f"FOLDS VALIDOS EVALUADOS: {valid_folds}")
+    print(f"UMBRAL OPTIMO CALCULADO: {fft_threshold:.6f}")
+    print(f"AUC GLOBAL AGREGADO:     {auc_global:.4f}")
+    print(f"SENSIBILIDAD GENERAL:    {sens:.4f}")
+    print(f"ESPECIFICIDAD GENERAL:   {spec:.4f}")
+    print("-" * 50)
+    print("MATRIZ DE CONFUSION:")
+    print(f"TN: {tn:5d} | FP: {fp:5d}")
+    print(f"FN: {fn:5d} | TP: {tp:5d}")
+    print("=" * 50 + "\n")
 
 if __name__ == "__main__":
-
     main()
