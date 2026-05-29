@@ -103,7 +103,7 @@ class AgnosticEvaluator:
 
         # CARGAR THRESHOLD
         threshold_data = joblib.load(
-              self.model_dir / "optimal_threshold_hibrido.joblib"
+              self.model_dir / "optimal_threshold_fft.joblib"
         )
         if isinstance(threshold_data, dict):
             self.threshold = threshold_data.get("youden_threshold", 0.5)
@@ -187,7 +187,7 @@ class AgnosticEvaluator:
             window = df_specs.iloc[i : i + seq_len].values 
             current_time = df_specs.index[i + (seq_len // 2)] 
 
-            # ESCALADO
+            # ESCALADO TEMPORAL
             flat_scaled = self.scaler.transform(window)
             x_time_np = np.expand_dims(flat_scaled, axis=0).astype(np.float32)
 
@@ -196,17 +196,13 @@ class AgnosticEvaluator:
             x_fft_np = (x_fft_np / x_time_np.shape[1]).astype(np.float32).reshape(1, -1)
 
             # CARGA A DISPOSITIVO
-            x_time_tensor = torch.from_numpy(x_time_np).to(self.device)
             x_fft_tensor = torch.from_numpy(x_fft_np).to(self.device)
 
-            # PREDICCION 
+            # PREDICCION FFT
             with torch.no_grad():
-
-                #FFT
-                
                 out_fft_logits = self.model_fft(x_fft_tensor)
                 prob_fft = torch.softmax(out_fft_logits, dim=1)[0, 1].item()
-                pred_fft = int(prob_fft >= 0.09)
+                pred_fft = int(prob_fft >= self.threshold)
 
             results_log.append({
                 "timestamp": current_time.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
@@ -215,14 +211,14 @@ class AgnosticEvaluator:
             })
 
             if i % 50 == 0:
-                logger.info(f"{current_time.strftime('%H:%M:%S')} | PROB: {prob_hybrid:.3f} | PRED: {pred_hybrid}")
+                logger.info(f"{current_time.strftime('%H:%M:%S')} | PROB: {prob_fft:.3f} | PRED: {pred_fft}")
 
         self.client.close()
 
         # SUAVIZADO POR HISTERESIS
         if results_log:
             df_res = pd.DataFrame(results_log)
-            df_res['prob_smoothed'] = df_res['prob_hybrid'].rolling(window=10, min_periods=1, center=True).mean()
+            df_res['prob_smoothed'] = df_res['prob_fft'].rolling(window=10, min_periods=1, center=True).mean()
             df_res['pred_final_smoothed'] = (df_res['prob_smoothed'] >= self.threshold).astype(int)
             return df_res
         
