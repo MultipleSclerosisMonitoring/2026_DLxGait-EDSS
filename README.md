@@ -60,14 +60,6 @@ pip install -e .
 pip install -r requirements.txt
 ```
 
-### Dependencia adicional
-
-Para la estimación de orientación basada en cuaterniones:
-
-```bash
-pip install ahrs
-```
-
 ---
 
 # Configuración de InfluxDB
