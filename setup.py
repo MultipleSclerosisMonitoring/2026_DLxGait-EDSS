@@ -19,6 +19,8 @@ setup(
         "pydantic",
         "ahrs",
         "scikit-learn",
-        "influxdb-client"
+        "influxdb-client",
+        "h5py",
+        "torch"
     ]
 )
