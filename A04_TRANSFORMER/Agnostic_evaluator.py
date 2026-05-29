@@ -168,7 +168,7 @@ class AgnosticEvaluator:
 
         # EMPAREJAR LONGITUDES
         min_len = min(tensor_l.shape[1], tensor_r.shape[1])
-        tensor_all = np.vstack([tensor_l[:, :min_len], tensor_r[:, :min_len]]).T 
+        tensor_all = np.vstack([tensor_r[:, :min_len], tensor_l[:, :min_len]]).T 
 
         if tensor_all.shape[1] != self.t_cfg.input_dim:
             raise ValueError(f"DIMENSION INCORRECTA: Esperaba {self.t_cfg.input_dim}, obtuvo {tensor_all.shape[1]}")
