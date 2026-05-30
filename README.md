@@ -82,6 +82,77 @@ influxdb:
   token: "YOUR_TOKEN"
   tzval: "Europe/Madrid"
 ```
+---
+# Pipeline de Datos (Extracción y Preprocesamiento)
+
+Antes de realizar la inferencia o entrenar nuevos modelos, es necesario generar el dataset estructurado a partir de los registros de la base de datos.
+
+## 1. Extracción de Datos
+
+Este comando lee los intervalos temporales del archivo Excel de metadatos, extrae las señales desde InfluxDB y genera tensores en formato `.parquet` en el directorio de resultados.
+
+```bash
+python A01_EXTRACCION_DATOS/extract_data_plus.py \
+    --backend influxdbms \
+    -c A01_EXTRACCION_DATOS/config.yaml \
+    -e A01_EXTRACCION_DATOS/solicitud.xlsx
+```
+
+## 2. Limpieza y Empaquetado (HDF5)
+
+Este comando toma los archivos `.parquet` generados, aplica las ventanas deslizantes, cruza los identificadores y empaqueta todo en un dataset jerárquico balanceado (`dataset_jerarquico.hdf5`).
+
+```bash
+python A02_LIMPIEZA/limpieza.py \
+    --input A01_EXTRACCION_DATOS/resultados \
+    --output DATASET_LISTO
+```
+
+---
+
+# Entrenamiento de Modelos
+
+Una vez generado el dataset jerárquico, se pueden entrenar los modelos de Deep Learning utilizados por el sistema.
+
+El proceso entrena de forma automática:
+
+- Transformer Temporal
+- Clasificador FFT
+- Modelo Híbrido Tiempo + Frecuencia
+- Cálculo automático de umbral óptimo
+- Guardado de escalador (`scaler_gait.joblib`)
+- Exportación de pesos (`.pth`)
+- Generación de métricas y gráficas de validación
+
+## Entrenamiento completo
+
+```bash
+python A04_TRANSFORMER/AA_TRANSFORMER_V1.py \
+    --dataset "DATASET_LISTO/dataset_jerarquico.hdf5" \
+    --out_dir "A05_MODELOS_ENTRENADOS"
+```
+
+## Archivos generados
+
+Tras finalizar el entrenamiento se crearán automáticamente:
+
+```text
+A05_MODELOS_ENTRENADOS/
+│
+├── modelo_transformer.pth
+├── modelo_fft.pth
+├── modelo_hibrido.pth
+├── scaler_gait.joblib
+├── optimal_threshold_hibrido.joblib
+├── transformer_config.joblib
+│
+└── graficas/
+    ├── MODELO_TRANSFORMER_Matriz_Confusion.png
+    ├── MODELO_FFT_Matriz_Confusion.png
+    └── MODELO_HIBRIDO_FINAL_Matriz_Confusion.png
+```
+
+Estos artefactos serán utilizados posteriormente durante la inferencia clínica y la evaluación externa del sistema.
 
 ---
 
