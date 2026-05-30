@@ -120,18 +120,42 @@ class AgnosticEvaluator:
         # CONSULTAR INFLUXDB
         for foot in FEET:
             logger.info(f"CONSULTANDO PIE: {foot}")
-            df = self.client.query_data(start, end, reference, foot)
+            
+            try:
+                # EJECUTA CONSULTA API
+                df = self.client.query_data(start, end, reference, foot)
+                
+            except Exception as e:
+                # EXTRAE TOKEN PARCIAL
+                tk = self.client.token
+                tk_safe = f"{tk[:5]}...{tk[-5:]}" if len(tk) > 10 else "INVALID"
+                
+                # REGISTRA CREDENCIALES USADAS
+                logger.error(f"ERROR CONSULTA: {e}")
+                logger.critical(
+                    f"FALLO EN EVALUACION AGNOSTICA. "
+                    f"CREDENCIALES USADAS -> "
+                    f"URL: {self.client.url} | "
+                    f"ORG: {self.client.org} | "
+                    f"BUCKET: {self.client.bucket} | "
+                    f"TOKEN: {tk_safe}"
+                )
+                raise SystemExit(1)
+
             if df.empty:
                 logger.warning(f"SIN DATOS: Paciente {reference} Pie {foot}")
                 continue
+                
             df = df.set_index("_time").sort_index()
             df.index = pd.to_datetime(df.index)
             df.rename(columns=SENSOR_FIELDS_INFLUXDBMS, inplace=True)
             raw_data_by_foot[foot] = df
 
+        # VALIDAR AMBOS PIES
         if len(raw_data_by_foot) < 2:
             raise ValueError("AMBOS PIES SON REQUERIDOS PARA INFERENCIA.")
 
+        # CALCULAR RANGO TEMPORAL
         common_start = max(df.index.min() for df in raw_data_by_foot.values())
         common_end = min(df.index.max() for df in raw_data_by_foot.values())
         if common_start >= common_end: raise ValueError("INTERVALO TEMPORAL INVALIDO.")
