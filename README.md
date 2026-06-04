@@ -336,13 +336,21 @@ timestamp,prob_hybrid,pred_hybrid,prob_smoothed,pred_final_smoothed
 
 # Pipeline de Reconstrucción Cinemática
 
-El pipeline biomecánico puede ejecutarse mediante:
+El pipeline biomecánico puede ejecutarse mediante formato de fecha tradicional o ISO 8601:
 
 ```bash
 python run_pipeline.py ^
 --paciente CODIGO_PACIENTE ^
---inicio "2025-01-01 10:00:00" ^
---fin "2025-01-01 10:10:00" ^
+--inicio "yyyy-mm-dd hh:mm:ss" ^
+--fin "yyyy-mm-dd hh:mm:ss" ^
+--out resultados.csv
+```
+
+```bash
+python run_pipeline.py ^
+--paciente CODIGO_PACIENTE ^
+--inicio "yyyy-mm-ddThh:mm:ssZ" ^
+--fin "yyyy-mm-ddThh:mm:ssZ" ^
 --out resultados.csv
 ```
 
