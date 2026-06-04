@@ -571,20 +571,6 @@ El sistema intentará:
 
 ---
 
-## Warning de Scikit-learn
-
-Mensajes como:
-
-```text
-InconsistentVersionWarning
-```
-
-indican diferencias entre versiones de `scikit-learn` utilizadas al entrenar y cargar modelos.
-
-Se recomienda utilizar la misma versión del entorno de entrenamiento para garantizar reproducibilidad completa.
-
----
-
 # Roadmap
 
 ## Completado
