@@ -111,6 +111,33 @@ python A03_PREPROCESAMIENTO/LIMPIEZA.py \
 
 ---
 
+# Flujo de Ejecución (Para el Tribunal)
+
+El sistema permite dos flujos de trabajo principales, dependiendo de si se desea entrenar una nueva arquitectura o evaluar pacientes con el sistema ya consolidado.
+
+## Opción A — Entrenar modelos desde cero
+Genera nuevos artefactos (`.pth`, escaladores, umbrales) a partir del dataset procesado:
+
+```bash
+python A04_TRANSFORMER\AA_TRANSFORMER_V1.py ^
+    --dataset "DATASET_LISTO\dataset_jerarquico.hdf5" ^
+    --out_dir "A05_MODELOS_ENTRENADOS"
+```
+
+## Opción B — Inferencia con modelos preentrenados
+Si ya existen los modelos y escaladores, se puede saltar el entrenamiento y ejecutar el evaluador agnóstico directamente sobre el flujo continuo:
+
+```bash
+python A04_TRANSFORMER\Agnostic_evaluator.py ^
+    -c A01_EXTRACCION_DATOS\config.yaml ^
+    -m A05_MODELOS_ENTRENADOS ^
+    -r CODIGO_PACIENTE ^
+    --start "2025-12-24T10:53:30Z" ^
+    --end "2025-12-24T10:58:18Z"
+```
+
+---
+
 # Entrenamiento de Modelos
 
 Una vez generado el dataset jerárquico, se pueden entrenar los modelos de Deep Learning utilizados por el sistema.
