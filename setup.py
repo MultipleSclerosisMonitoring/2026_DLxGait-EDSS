@@ -27,6 +27,7 @@ setup(
         "pyyaml",
         "imageio",
         "seaborn",
-        "pytest"
+        "pytest",
+        "pyarrow"
     ]
 )
