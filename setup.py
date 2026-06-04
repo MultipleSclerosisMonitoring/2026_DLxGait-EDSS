@@ -21,6 +21,12 @@ setup(
         "scikit-learn",
         "influxdb-client",
         "h5py",
-        "torch"
+        "torch",
+        "openpyxl",
+        "joblib",
+        "pyyaml",
+        "imageio",
+        "seaborn",
+        "pytest"
     ]
 )
