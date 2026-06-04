@@ -24,7 +24,8 @@ dependencies = [
     "imageio",
     "seaborn",
     "openpyxl",
-    "ahrs"
+    "ahrs",
+    "pyarrow"
 ]
 
 [tool.setuptools.packages.find]
