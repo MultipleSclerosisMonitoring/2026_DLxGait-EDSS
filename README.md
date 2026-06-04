@@ -162,8 +162,8 @@ python A04_TRANSFORMER\Agnostic_evaluator.py ^
     -c A01_EXTRACCION_DATOS\config.yaml ^
     -m A05_MODELOS_ENTRENADOS ^
     -r CODIGO_PACIENTE ^
-    --start "2025-12-24T10:53:30Z" ^
-    --end "2025-12-24T10:58:18Z"
+    --start "yyyy-mm-ddThh:mm:ssZ" ^
+    --end "yyyy-mm-ddThh:mm:ssZ"
 ```
 
 ---
