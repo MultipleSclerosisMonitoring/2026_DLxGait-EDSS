@@ -22,7 +22,9 @@ dependencies = [
     "scikit-learn",
     "pytest",
     "imageio",
-    "seaborn"
+    "seaborn",
+    "openpyxl",
+    "ahrs"
 ]
 
 [tool.setuptools.packages.find]
