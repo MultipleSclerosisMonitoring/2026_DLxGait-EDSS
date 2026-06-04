@@ -111,9 +111,9 @@ python A03_PREPROCESAMIENTO/LIMPIEZA.py \
 
 ---
 
-# Flujo de Ejecución (Para el Tribunal)
+# Flujo de Ejecución 
 
-El sistema permite dos flujos de trabajo principales, dependiendo de si se desea entrenar una nueva arquitectura o evaluar pacientes con el sistema ya consolidado.
+El pipeline permite dos opciones de flujos de trabajo principales, dependiendo de si se desea probar el entrenamiento de las arquitecturas o solo evaluar pacientes con el sistema ya consolidado.
 
 ## Opción A — Entrenar modelos desde cero
 Genera nuevos artefactos (`.pth`, escaladores, umbrales) a partir del dataset procesado:
@@ -124,24 +124,6 @@ python A04_TRANSFORMER\AA_TRANSFORMER_V1.py ^
     --out_dir "A05_MODELOS_ENTRENADOS"
 ```
 
-## Opción B — Inferencia con modelos preentrenados
-Si ya existen los modelos y escaladores, se puede saltar el entrenamiento y ejecutar el evaluador agnóstico directamente sobre el flujo continuo:
-
-```bash
-python A04_TRANSFORMER\Agnostic_evaluator.py ^
-    -c A01_EXTRACCION_DATOS\config.yaml ^
-    -m A05_MODELOS_ENTRENADOS ^
-    -r CODIGO_PACIENTE ^
-    --start "2025-12-24T10:53:30Z" ^
-    --end "2025-12-24T10:58:18Z"
-```
-
----
-
-# Entrenamiento de Modelos
-
-Una vez generado el dataset jerárquico, se pueden entrenar los modelos de Deep Learning utilizados por el sistema.
-
 El proceso entrena de forma automática:
 
 - Transformer Temporal
@@ -151,14 +133,6 @@ El proceso entrena de forma automática:
 - Guardado de escalador (`scaler_gait.joblib`)
 - Exportación de pesos (`.pth`)
 - Generación de métricas y gráficas de validación
-
-## Entrenamiento completo
-
-```bash
-python A04_TRANSFORMER/AA_TRANSFORMER_V1.py \
-    --dataset "DATASET_LISTO/dataset_jerarquico.hdf5" \
-    --out_dir "A05_MODELOS_ENTRENADOS"
-```
 
 ## Archivos generados
 
@@ -180,7 +154,17 @@ A05_MODELOS_ENTRENADOS/
     └── MODELO_HIBRIDO_FINAL_Matriz_Confusion.png
 ```
 
-Estos artefactos serán utilizados posteriormente durante la inferencia clínica y la evaluación externa del sistema.
+## Opción B — Inferencia con modelos preentrenados
+En la carpeta A05_MODELOS_ENTRENADOS están los modelos y escaladores, se puede saltar el entrenamiento y ejecutar el evaluador agnóstico directamente sobre el flujo continuo:
+
+```bash
+python A04_TRANSFORMER\Agnostic_evaluator.py ^
+    -c A01_EXTRACCION_DATOS\config.yaml ^
+    -m A05_MODELOS_ENTRENADOS ^
+    -r CODIGO_PACIENTE ^
+    --start "2025-12-24T10:53:30Z" ^
+    --end "2025-12-24T10:58:18Z"
+```
 
 ---
 
