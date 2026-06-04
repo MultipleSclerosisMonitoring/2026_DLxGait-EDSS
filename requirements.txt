@@ -13,3 +13,4 @@ pytest
 imageio
 seaborn
 ahrs
+openpyxl
