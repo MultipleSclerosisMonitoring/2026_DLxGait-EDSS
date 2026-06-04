@@ -103,9 +103,10 @@ python A01_EXTRACCION_DATOS/extract_data_plus.py \
 Este comando toma los archivos `.parquet` generados, aplica las ventanas deslizantes, cruza los identificadores y empaqueta todo en un dataset jerárquico balanceado (`dataset_jerarquico.hdf5`).
 
 ```bash
-python A02_LIMPIEZA/limpieza.py \
-    --input A01_EXTRACCION_DATOS/resultados \
-    --output DATASET_LISTO
+python A03_PREPROCESAMIENTO/LIMPIEZA.py \
+    --input resultados \
+    --output DATASET_LISTO \
+    --excel A01_EXTRACCION_DATOS/solicitud.xlsx
 ```
 
 ---
@@ -176,11 +177,9 @@ python A04_TRANSFORMER/Agnostic_evaluator.py
 
 # Compatibilidad y reproducibilidad
 
-El proyecto fue refactorizado para garantizar compatibilidad entre distintos entornos de ejecución y evitar dependencias implícitas de rutas locales.
+Para garantizar compatibilidad entre distintos entornos de ejecución y evitar dependencias implícitas de rutas locales se incorporaron las siguientes medidas:
 
-Se incorporaron las siguientes mejoras:
-
-- Empaquetado editable mediante `setup.py`
+- Empaquetado editable moderno mediante pyproject.toml y setup.py
 - Resolución agnóstica de rutas (`Path(__file__)`)
 - Compatibilidad equivalente entre:
 
@@ -495,6 +494,8 @@ Incluye:
 - Type Hinting
 - Pandas
 - Matplotlib
+- Openpyxl
+- Pyarrow
 
 ## Biomecánica
 
