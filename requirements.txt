@@ -14,3 +14,4 @@ imageio
 seaborn
 ahrs
 openpyxl
+pyarrow
