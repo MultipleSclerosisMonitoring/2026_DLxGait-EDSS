@@ -338,7 +338,7 @@ timestamp,prob_hybrid,pred_hybrid,prob_smoothed,pred_final_smoothed
 
 El pipeline biomecánico puede ejecutarse mediante formato de fecha tradicional o ISO 8601:
 
-```bash
+```bash TRADICIONAL
 python run_pipeline.py ^
 --paciente CODIGO_PACIENTE ^
 --inicio "yyyy-mm-dd hh:mm:ss" ^
@@ -346,7 +346,7 @@ python run_pipeline.py ^
 --out resultados.csv
 ```
 
-```bash
+```bash ISO
 python run_pipeline.py ^
 --paciente CODIGO_PACIENTE ^
 --inicio "yyyy-mm-ddThh:mm:ssZ" ^
