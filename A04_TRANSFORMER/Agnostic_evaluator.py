@@ -252,51 +252,36 @@ class AgnosticEvaluator:
 # =========================================================
 # ENTRYPOINT CLI
 # =========================================================
-def main() -> None:
-    """
-    Punto de entrada ejecutable.
-    """
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-c", "--config", type=Path, required=True)
-    parser.add_argument("-m", "--models", type=Path, required=True)
-    parser.add_argument("-r", "--reference", type=str, required=True)
-    parser.add_argument("--start", type=str, required=True)
-    parser.add_argument("--end", type=str, required=True)
-    parser.add_argument("-o", "--output", type=Path, default=Path("./continuous_eval.csv"))
-    args = parser.parse_args()
+try:
 
-    try:
-        # CONFIGURAR ZONAS HORARIAS
-        tz_madrid = ZoneInfo("Europe/Madrid")
-        tz_utc = ZoneInfo("UTC")
+    def parse_madrid_time(time_str: str) -> datetime:
+        """
+        Convierte texto temporal a datetime local Madrid.
 
-        def parse_to_utc(time_str: str) -> datetime:
-            """
-            Convierte texto temporal a UTC.
-            
-            :param time_str: Cadena de tiempo input.
-            :return: Datetime en zona UTC.
-            """
-            # LIMPIAR FORMATO ZULU
-            clean_str = time_str.replace("Z", "")
-            
-            try:
-                dt = datetime.fromisoformat(clean_str)
-            except ValueError:
-                dt = datetime.strptime(clean_str, "%Y-%m-%d %H:%M:%S")
-            
-            # ASIGNAR ORIGEN Y CONVERTIR
-            dt_madrid = dt.replace(tzinfo=tz_madrid) if dt.tzinfo is None else dt
-            return dt_madrid.astimezone(tz_utc)
+        :param time_str: Fecha/hora en formato ISO o
+                         YYYY-MM-DD HH:MM:SS.
+        :return: Datetime local Madrid.
+        """
 
-        # PARSEAR ARGUMENTOS TEMPORALES
-        start_dt = parse_to_utc(args.start)
-        end_dt = parse_to_utc(args.end)
+        clean_str = time_str.replace("Z", "")
 
-    except Exception as e:
-        # CAPTURAR ERROR FORMATO
-        logger.critical(f"ERROR FORMATO FECHA: {e}")
-        sys.exit(1)
+        try:
+            dt = datetime.fromisoformat(clean_str)
+        except ValueError:
+            dt = datetime.strptime(
+                clean_str,
+                "%Y-%m-%d %H:%M:%S"
+            )
+
+        # SIEMPRE MADRID
+        return dt.replace(tzinfo=ZoneInfo("Europe/Madrid"))
+
+    start_dt = parse_madrid_time(args.start)
+    end_dt = parse_madrid_time(args.end)
+
+except Exception as e:
+    logger.critical(f"ERROR FORMATO FECHA: {e}")
+    sys.exit(1)
 
     # INICIAR PROCESO EVALUACION
     logger.info(f"INICIANDO EVALUACION AGNOSTICA: {args.reference}")
