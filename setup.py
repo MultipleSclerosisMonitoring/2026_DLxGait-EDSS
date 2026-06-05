@@ -18,7 +18,7 @@ setup(
         "matplotlib",
         "pydantic",
         "ahrs",
-        "scikit-learn",
+        "scikit-learn==1.7.2",
         "influxdb-client",
         "h5py",
         "torch",
