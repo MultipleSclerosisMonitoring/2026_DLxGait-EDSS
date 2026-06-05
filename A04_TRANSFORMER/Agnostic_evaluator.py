@@ -14,6 +14,7 @@ import argparse
 import logging
 import sys
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Dict, List
 
@@ -252,7 +253,9 @@ class AgnosticEvaluator:
 # ENTRYPOINT CLI
 # =========================================================
 def main() -> None:
-    """Punto de entrada ejecutable."""
+    """
+    Punto de entrada ejecutable.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--config", type=Path, required=True)
     parser.add_argument("-m", "--models", type=Path, required=True)
@@ -263,42 +266,53 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
-    # Intentar ISO 8601
-        start_dt = datetime.fromisoformat(
-            args.start.replace("Z", "+00:00")
-        ).replace(tzinfo=None)
+        # CONFIGURAR ZONAS HORARIAS
+        tz_madrid = ZoneInfo("Europe/Madrid")
+        tz_utc = ZoneInfo("UTC")
 
-        end_dt = datetime.fromisoformat(
-            args.end.replace("Z", "+00:00")
-        ).replace(tzinfo=None)
+        def parse_to_utc(time_str: str) -> datetime:
+            """
+            Convierte texto temporal a UTC.
+            
+            :param time_str: Cadena de tiempo input.
+            :return: Datetime en zona UTC.
+            """
+            # LIMPIAR FORMATO ZULU
+            clean_str = time_str.replace("Z", "")
+            
+            try:
+                dt = datetime.fromisoformat(clean_str)
+            except ValueError:
+                dt = datetime.strptime(clean_str, "%Y-%m-%d %H:%M:%S")
+            
+            # ASIGNAR ORIGEN Y CONVERTIR
+            dt_madrid = dt.replace(tzinfo=tz_madrid) if dt.tzinfo is None else dt
+            return dt_madrid.astimezone(tz_utc)
 
-    except Exception:
-        try:
-            # Intentar formato clásico
-            start_dt = datetime.strptime(
-                args.start,
-                "%Y-%m-%d %H:%M:%S"
-            )
+        # PARSEAR ARGUMENTOS TEMPORALES
+        start_dt = parse_to_utc(args.start)
+        end_dt = parse_to_utc(args.end)
 
-            end_dt = datetime.strptime(
-                args.end,
-                "%Y-%m-%d %H:%M:%S"
-        )
+    except Exception as e:
+        # CAPTURAR ERROR FORMATO
+        logger.critical(f"ERROR FORMATO FECHA: {e}")
+        sys.exit(1)
 
-        except Exception as e:
-            logger.critical(f"ERROR FORMATO FECHA: {e}")
-            sys.exit(1)
-
+    # INICIAR PROCESO EVALUACION
     logger.info(f"INICIANDO EVALUACION AGNOSTICA: {args.reference}")
 
     try:
+        # INSTANCIAR OBJETO EVALUADOR
         evaluator = AgnosticEvaluator(config_path=args.config, model_dir=args.models)
         
+        # CONSULTAR BASE DATOS
         logger.info("RECUPERANDO FLUJOS INFLUXDB...")
         aligned_streams = evaluator.fetch_and_align_stream(args.reference, start_dt, end_dt)
 
+        # EJECUTAR INFERENCIA CONTINUA
         inference_report = evaluator.run_inference(aligned_streams, start_dt)
 
+        # GUARDAR RESULTADOS CSV
         if not inference_report.empty:
             inference_report.to_csv(args.output, index=False)
             logger.info(f"RESULTADOS GUARDADOS EN: {args.output}")
@@ -307,6 +321,7 @@ def main() -> None:
             logger.warning("SIN PREDICCIONES: INTERVALO TEMPORAL MUY CORTO.")
 
     except Exception as e:
+        # CAPTURAR ERROR CRITICO
         logger.critical(f"FALLO EN EVALUACION AGNOSTICA: {e}")
         sys.exit(1)
 
