@@ -7,7 +7,6 @@ Incluye validación Pydantic, POO estricta, interpolación física
 y auditoría de reproducibilidad (Hashing y Seeds).
 """
 from __future__ import annotations
-
 import argparse
 import sys
 import logging
@@ -68,8 +67,8 @@ class ExtractionParams(BaseModel):
     freq_target_hz: confloat(gt=0) = 75.0
     freq_psd_hz: PositiveInt = 75
     fact_hz: confloat(gt=0) = 1.0
-    f_start_hz: confloat(ge=0) = 0.5
-    f_stop_hz: confloat(gt=0) = 5.0
+    f_start_hz: confloat(ge=0) = 0.25
+    f_stop_hz: confloat(gt=0) = 7.0
     window_overlap: confloat(ge=0, lt=1) = 0.5
 
 # ============================================================
@@ -286,7 +285,7 @@ class GaitFeatureExtractor:
         :return: Matriz apilada, frames de tiempo, vector de frecuencias.
         :rtype: Tuple[np.ndarray, np.ndarray, np.ndarray]
         """
-        order = ["acc_mag", "gyro_mag", "S0", "S1", "S2"]
+        order = ["acc_mag", "gyro_mag","mag_mag", "S0", "S1", "S2"]
         imgs = [specs[k][2] for k in order]
         stacked = np.vstack(imgs)
         return stacked, specs[order[0]][1], specs[order[0]][0] 
@@ -328,6 +327,7 @@ class GaitFeatureExtractor:
             # MAGNITUDES
             acc_mag = self.magnitude(df, ["Ax", "Ay", "Az"])
             gyro_mag = self.magnitude(df, ["Gx", "Gy", "Gz"])
+            mag_mag = self.magnitude(df, ["Mx", "My", "Mz"])
             press = [df[c] for c in ("S0", "S1", "S2")]
 
             specs: Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
@@ -338,6 +338,8 @@ class GaitFeatureExtractor:
                     psd = self.compute_psd_spectrogram(acc_mag, n_per_seg, n_overlap)
                 elif feature == "gyro_mag":
                     psd = self.compute_psd_spectrogram(gyro_mag, n_per_seg, n_overlap)
+                elif feature == "mag_mag":
+                    psd = self.compute_psd_spectrogram(mag_mag, n_per_seg, n_overlap)
                 elif feature == "S0":
                     psd = self.compute_psd_spectrogram(press[0], n_per_seg, n_overlap)
                 elif feature == "S1":
@@ -487,6 +489,7 @@ SENSOR_FIELDS_INFLUXDB_CLIENT: Dict[str, List[str]] = {
 SENSOR_FIELDS_INFLUXDBMS: Dict[str, str] = {
     "Ax": "Ax", "Ay": "Ay", "Az": "Az",
     "Gx": "Gx", "Gy": "Gy", "Gz": "Gz",
+    "Mx": "Mx", "My": "My", "Mz": "Mz",
     "S0": "S0", "S1": "S1", "S2": "S2",
 }
 
@@ -566,7 +569,7 @@ def cli() -> None:
     parser.add_argument("-e", "--excel", type=Path, help="Metadata Excel", required=True)
 
     args = parser.parse_args()
-    lfeat = ['acc_mag','gyro_mag','S0','S1','S2']
+    lfeat = ['acc_mag','gyro_mag','mag_mag','S0','S1','S2']
 
     try:
         # FIJAR DETERMINISMO GLOBAL
@@ -583,6 +586,11 @@ def cli() -> None:
 
         out_path = args.output if args.output else Path(params_dict['io'].get('out', './resultados'))
         out_path.mkdir(parents=True, exist_ok=True)
+        
+        BASE_DIR = Path(__file__).resolve().parent.parent
+        parquets_dir = BASE_DIR / "PARQUETS"
+        parquets_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"CARPETA DE PARQUETS CONFIGURADA EN: {parquets_dir}")
 
         # VALIDAR PARAMETROS CON PYDANTIC
         valid_params = ExtractionParams(**params_dict['params'])
@@ -610,10 +618,18 @@ def cli() -> None:
             qtok = str(row["reference"]).strip()
             mov  = row.get("mov_type", None)
             
+            # LIMITAR EL TIEMPO DE REPOSO (UNDERSAMPLING)
+            if mov == 0:
+                duracion = (end - start).total_seconds()
+                max_segundos = 300  # 5 MINUTOS MAXIMO DE REPOSO POR SEGMENTO
+                if duracion > max_segundos:
+                    end = start + timedelta(seconds=max_segundos)
+                    logger.info(f"[{label}] REPOSO RECORTADO DE {duracion}s A {max_segundos}s")
+
             if len(qtok) < 5: 
                 logger.warning(f"[{label}] ID corto. Saltando.")
                 continue
-
+            
             raw_data_by_foot: Dict[str, pd.DataFrame] = {} 
 
             # CONSULTA BD
@@ -669,7 +685,7 @@ def cli() -> None:
                     if len(tensors.keys()) == 2: 
                         if len(tensors["Left"][1]) == len(tensors["Right"][1]):
                             tensor_all = np.vstack([tensors["Left"][0], tensors["Right"][0]])
-                            parquet_path = out_path / f"{label}_tensor{mov_str}.parquet"
+                            parquet_path = parquets_dir / f"{label}_tensor{mov_str}.parquet"
                             ta_pd = pd.DataFrame(tensor_all)
                             
                             combined_datetimes = [start + timedelta(seconds=float(t)) for t in tensors["Left"][1]]
