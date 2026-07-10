@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Sistema de Evaluación Agnóstico para el Análisis Biomecánico Continuo de la Marcha.
+Sistema de Evaluacion Agnostico para el Analisis Biomecanico Continuo de la Marcha.
 
-Este módulo proporciona un pipeline unificado para consultar datos continuos 
+Este modulo proporciona un pipeline unificado para consultar datos continuos 
 de sensores desde InfluxDB, calcular los espectrogramas PSD correspondientes 
 a la fase de entrenamiento, y generar predicciones segundo a segundo suavizadas 
-mediante una ventana móvil.
+mediante una ventana movil.
 """
 
 from __future__ import annotations
