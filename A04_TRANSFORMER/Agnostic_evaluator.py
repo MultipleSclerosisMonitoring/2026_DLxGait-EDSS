@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Agnostic Evaluation System for Continuous Biomechanical Gait Analysis.
+Sistema de Evaluación Agnóstico para el Análisis Biomecánico Continuo de la Marcha.
 
-This module provides a unified pipeline to query continuous sensor data from
-InfluxDB, compute the PSD Spectrograms matching the training phase,
-and yield second-by-second predictions smoothed via rolling window.
-
+Este módulo proporciona un pipeline unificado para consultar datos continuos 
+de sensores desde InfluxDB, calcular los espectrogramas PSD correspondientes 
+a la fase de entrenamiento, y generar predicciones segundo a segundo suavizadas 
+mediante una ventana móvil.
 """
 
 from __future__ import annotations
@@ -14,9 +14,8 @@ import argparse
 import logging
 import sys
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict
 
 import joblib
 import numpy as np
@@ -252,87 +251,64 @@ class AgnosticEvaluator:
 # =========================================================
 # ENTRYPOINT CLI
 # =========================================================
-
 def main() -> None:
-    """
-    Punto de entrada ejecutable.
-    """
+    """Punto de entrada ejecutable."""
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--config", type=Path, required=True)
     parser.add_argument("-m", "--models", type=Path, required=True)
     parser.add_argument("-r", "--reference", type=str, required=True)
     parser.add_argument("--start", type=str, required=True)
     parser.add_argument("--end", type=str, required=True)
-    parser.add_argument(
-        "-o",
-        "--output",
-        type=Path,
-        default=Path("./continuous_eval.csv")
-    )
-
+    parser.add_argument("-o", "--output", type=Path, default=Path("./continuous_eval.csv"))
     args = parser.parse_args()
 
     try:
+    # Intentar ISO 8601
+        start_dt = datetime.fromisoformat(
+            args.start.replace("Z", "+00:00")
+        ).replace(tzinfo=None)
 
-        def parse_madrid_time(time_str: str) -> datetime:
-            """
-            Convierte texto temporal a datetime local Madrid.
+        end_dt = datetime.fromisoformat(
+            args.end.replace("Z", "+00:00")
+        ).replace(tzinfo=None)
 
-            :param time_str: Fecha/hora en formato ISO o
-                             YYYY-MM-DD HH:MM:SS.
-            :return: Datetime local Madrid.
-            """
-
-            clean_str = time_str.replace("Z", "")
-
-            try:
-                dt = datetime.fromisoformat(clean_str)
-
-            except ValueError:
-                dt = datetime.strptime(
-                    clean_str,
-                    "%Y-%m-%d %H:%M:%S"
-                )
-
-            # SIEMPRE MADRID
-            return dt.replace(
-                tzinfo=ZoneInfo("Europe/Madrid")
+    except Exception:
+        try:
+            # Intentar formato clásico
+            start_dt = datetime.strptime(
+                args.start,
+                "%Y-%m-%d %H:%M:%S"
             )
 
-        start_dt = parse_madrid_time(args.start)
-        end_dt = parse_madrid_time(args.end)
-
-        logger.info(
-            f"INTERVALO SOLICITADO: "
-            f"{start_dt.isoformat()} -> {end_dt.isoformat()}"
+            end_dt = datetime.strptime(
+                args.end,
+                "%Y-%m-%d %H:%M:%S"
         )
 
-        evaluator = AgnosticEvaluator(
-            config_path=args.config,
-            model_dir=args.models
-        )
+        except Exception as e:
+            logger.critical(f"ERROR FORMATO FECHA: {e}")
+            sys.exit(1)
 
-        aligned_data = evaluator.fetch_and_align_stream(
-            reference=args.reference,
-            start=start_dt,
-            end=end_dt
-        )
+    logger.info(f"INICIANDO EVALUACION AGNOSTICA: {args.reference}")
 
-        results = evaluator.run_inference(
-            aligned_data=aligned_data,
-            start=start_dt
-        )
+    try:
+        evaluator = AgnosticEvaluator(config_path=args.config, model_dir=args.models)
+        
+        logger.info("RECUPERANDO FLUJOS INFLUXDB...")
+        aligned_streams = evaluator.fetch_and_align_stream(args.reference, start_dt, end_dt)
 
-        results.to_csv(args.output, index=False)
+        inference_report = evaluator.run_inference(aligned_streams, start_dt)
 
-        logger.info(
-            f"RESULTADOS GUARDADOS EN: {args.output}"
-        )
+        if not inference_report.empty:
+            inference_report.to_csv(args.output, index=False)
+            logger.info(f"RESULTADOS GUARDADOS EN: {args.output}")
+            logger.info(f"TOTAL PREDICCIONES GENERADAS: {len(inference_report)}")
+        else:
+            logger.warning("SIN PREDICCIONES: INTERVALO TEMPORAL MUY CORTO.")
 
     except Exception as e:
-        logger.critical(f"ERROR FORMATO FECHA: {e}")
+        logger.critical(f"FALLO EN EVALUACION AGNOSTICA: {e}")
         sys.exit(1)
 
-
 if __name__ == "__main__":
-    main()
+    main() 
