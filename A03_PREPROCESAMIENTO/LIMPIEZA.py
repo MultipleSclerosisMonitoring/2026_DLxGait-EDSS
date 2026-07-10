@@ -117,9 +117,9 @@ class PreprocessConfig(BaseModel):
     input_path: DirectoryPath
     output_path: Path
     excel_path: Path
-    fixed_length: int = Field(default=100, gt=0)
-    step_size: int = Field(default=10, gt=0)
-    min_records: int = Field(default=10, gt=0)
+    fixed_length: int = Field(default=20, gt=0)
+    step_size: int = Field(default=5, gt=0)
+    min_records: int = Field(default=5, gt=0)
     random_seed: int = Field(default=42, ge=0)
 
 # ============================================================
