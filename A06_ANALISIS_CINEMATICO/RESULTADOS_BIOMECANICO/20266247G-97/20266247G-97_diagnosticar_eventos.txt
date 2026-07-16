@@ -1,0 +1,65 @@
+[CALIBRACION Right] Umbral seleccionado: 0.30 (stance 63.5%)
+RADIOGRAFIA EVENTOS - 20266247G-97 - RIGHT
+==================================================
+Umbral utilizado:    63.5393
+Total HS detectados: 399
+Huecos anomalos (> 2s): 0
+
+==================================================
+
+[Right] Magnetometro usado: SI
+
+****************************************
+DIAGNOSTICO ZUPT INTERNO:
+Max Tiempo entre Mid-Stances: 1.00 seg
+Max Deriva Vertical Pura:     2.018 m
+Max Velocidad Vertical Z:     3.248 m/s
+N Huecos > 2.0 seg:           0
+Duracion total en huecos:     0.00 seg
+****************************************
+
+[CALIBRACION Left] Umbral seleccionado: 0.30 (stance 62.8%)
+RADIOGRAFIA EVENTOS - 20266247G-97 - LEFT
+==================================================
+Umbral utilizado:    62.8335
+Total HS detectados: 395
+Huecos anomalos (> 2s): 0
+
+==================================================
+
+[Left] Magnetometro usado: SI
+
+****************************************
+DIAGNOSTICO ZUPT INTERNO:
+Max Tiempo entre Mid-Stances: 1.01 seg
+Max Deriva Vertical Pura:     1.685 m
+Max Velocidad Vertical Z:     3.050 m/s
+N Huecos > 2.0 seg:           0
+Duracion total en huecos:     0.00 seg
+****************************************
+
+
+*********************************************
+AUDITORIA DE PASOS VALIDOS (DER VS IZQ)
+Total Pasos DER: 398
+Total Pasos IZQ: 394
+*********************************************
+
+
+=============================================
+RESUMEN BIOMECANICO GLOBAL
+=============================================
+METRICAS CLINICAS PROMEDIO:
+Velocidad Media: 0.346 m/s
+Zancada Der:     0.145 m
+Zancada Izq:     0.174 m
+Vel Vuelo Der:   0.647 m/s
+Vel Vuelo Izq:   0.693 m/s
+Asimetria MTC:   -5.2 %
+Pendiente Fatiga:0.000900
+
+RANGOS ESPACIALES POR TRAMO (max entre segmentos continuos):
+Pie DER -> X: [0.0, 0.0] Y: [0.0, 0.0] Z: [0.0, 0.0]
+Pie IZQ -> X: [0.0, 0.0] Y: [0.0, 0.0] Z: [0.0, 0.0]
+=============================================
+

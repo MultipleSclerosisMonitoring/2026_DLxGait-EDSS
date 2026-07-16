@@ -1,0 +1,50 @@
+
+=======================================================
+PIE: Right  (n = 14325 muestras)
+=======================================================
+
+  Eje Ax:
+    Rango: [-2.000, 1.996]
+    Muestras en el limite max (1.996): 682 (4.76%)
+    Muestras en el limite min (-2.000): 165 (1.15%)
+    Total saturado: 5.91%
+    Percentiles [1,5,25,50,75,95,99]: [-2.    -0.906 -0.188 -0.047  0.09   1.972  1.996]
+
+  Eje Ay:
+    Rango: [-0.504, 1.996]
+    Muestras en el limite max (1.996): 2131 (14.88%)
+    Muestras en el limite min (-0.504): 1 (0.01%)
+    Total saturado: 14.88%
+    Percentiles [1,5,25,50,75,95,99]: [0.125 0.305 0.926 1.012 1.582 1.996 1.996]
+
+  Eje Az:
+    Rango: [-1.777, 1.996]
+    Muestras en el limite max (1.996): 2 (0.01%)
+    Muestras en el limite min (-1.777): 1 (0.01%)
+    Total saturado: 0.02%
+    Percentiles [1,5,25,50,75,95,99]: [-1.031 -0.691 -0.363 -0.266 -0.137  0.105  0.976]
+
+=======================================================
+PIE: Left  (n = 14505 muestras)
+=======================================================
+
+  Eje Ax:
+    Rango: [-2.000, 1.996]
+    Muestras en el limite max (1.996): 694 (4.78%)
+    Muestras en el limite min (-2.000): 172 (1.19%)
+    Total saturado: 5.97%
+    Percentiles [1,5,25,50,75,95,99]: [-2.    -0.91  -0.188 -0.047  0.094  1.976  1.996]
+
+  Eje Ay:
+    Rango: [-0.504, 1.996]
+    Muestras en el limite max (1.996): 2135 (14.72%)
+    Muestras en el limite min (-0.504): 1 (0.01%)
+    Total saturado: 14.73%
+    Percentiles [1,5,25,50,75,95,99]: [0.125 0.305 0.926 1.008 1.578 1.996 1.996]
+
+  Eje Az:
+    Rango: [-1.777, 1.996]
+    Muestras en el limite max (1.996): 2 (0.01%)
+    Muestras en el limite min (-1.777): 1 (0.01%)
+    Total saturado: 0.02%
+    Percentiles [1,5,25,50,75,95,99]: [-1.031 -0.691 -0.359 -0.266 -0.137  0.109  0.988]
