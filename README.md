@@ -165,6 +165,148 @@ python A04_TRANSFORMER\Agnostic_evaluator.py ^
     --start "yyyy-mm-ddThh:mm:ssZ" ^
     --end "yyyy-mm-ddThh:mm:ssZ"
 ```
+# A06_ANALISIS_CINEMATICO — Pipeline Biomecanico Bilateral
+
+Modulo de reconstruccion cinematica 3D y calculo de metricas espaciotemporales
+de marcha bilateral, a partir de senales inerciales (IMU) y presion plantar
+adquiridas mediante calcetines inteligentes (SCKS). Este pipeline es previo
+e independiente del modelo de Deep Learning (`A04_TRANSFORMER`); genera
+biomarcadores biomecanicos que pueden integrarse posteriormente en modelos
+clinicos predictivos.
+
+## Entrypoint oficial
+
+El unico orquestador soportado es:
+
+```
+Orquestador_biomecanico.py
+```
+
+> Nota de migracion: una version previa y mas simple (`run_gait_pipeline.py`)
+> existio en este directorio pero fue descartada. No implementaba
+> auto-calibracion de umbral, fusion con magnetometro, segmentacion por
+> tramos continuos ni validaciones de calidad de senal, y solo procesaba
+> el pie derecho. Toda la documentacion y comandos de este README se
+> refieren exclusivamente a `Orquestador_biomecanico.py`.
+
+## Ejecucion
+
+```bash
+python A06_ANALISIS_CINEMATICO/Orquestador_biomecanico.py \
+    --paciente CODIGO_PACIENTE \
+    --inicio "yyyy-mm-dd hh:mm:ss" \
+    --fin "yyyy-mm-dd hh:mm:ss" \
+    --config-yaml A01_EXTRACCION_DATOS/config.yaml
+```
+
+### Parametros opcionales
+
+| Parametro | Default | Descripcion |
+|---|---|---|
+| `--fs` | 100 | Frecuencia de muestreo (Hz) |
+| `--fatigue-target` | `Gait_Speed_ms` | Variable sobre la que se calcula la pendiente de fatiga |
+| `--max-time-diff` | 0.20 | Tolerancia (s) para emparejar zancadas bilaterales |
+| `--th-right` / `--th-left` | None | Umbral manual de deteccion de eventos por pie (si se omite, se auto-calibra) |
+| `--sin-auto-calibrar` | False | Desactiva la auto-calibracion de umbral |
+| `--max-stride` | 1.9 | Longitud de zancada maxima plausible (m), para filtrar outliers |
+
+## Flujo del pipeline
+
+1. **Extraccion** (`extract_data_plus.py`, en `A01_EXTRACCION_DATOS`): consulta
+   InfluxDB (Flux) filtrando por `CodeID`, `Foot`, `type=SCKS` y rango temporal.
+2. **Deteccion de eventos** (`event_detector.py`): Heel Strike / Toe Off a
+   partir de presion plantar con umbral adaptativo e histeresis temporal.
+3. **Auto-calibracion de umbral**: barrido de fracciones de umbral por pie,
+   seleccionando la que produce un %stance fisiologico (45-70%).
+4. **Segmentacion por tramos continuos**: si hay huecos > 2s entre eventos
+   consecutivos (pausas, giros, perdida de deteccion), el registro se corta
+   en tramos y cada uno se procesa de forma aislada, evitando que la
+   integracion arrastre deriva de un tramo a otro.
+5. **Reconstruccion cinematica** (`kinematic_engine.py`, por tramo): fusion
+   sensorial (Madgwick, con magnetometro si esta disponible en los datos),
+   compensacion gravitacional, ZUPT (Zero Velocity Update) e integracion de
+   posicion 3D.
+6. **Emparejamiento bilateral y asimetria**: cruza zancadas de ambos pies por
+   proximidad temporal y calcula asimetria de velocidad, zancada y MTC.
+7. **Analisis de fatiga** (`fatigue_analysis.py`): regresion lineal
+   longitudinal sobre la variable objetivo, extrayendo la pendiente como
+   biomarcador de degradacion motora.
+
+## Herramientas de diagnostico (`tools/`)
+
+Estas herramientas se desarrollaron durante la validacion del pipeline con
+datos reales (ver `docs/MEMORIA_EXPLORACION_PIPELINE_BIOMECANICO.md` para el
+detalle completo del proceso y los hallazgos). Son utiles para depurar
+sesiones nuevas antes de confiar en sus metricas:
+
+- **`TESTMAGNETO.py`**: audita measurements, field keys y tag keys reales
+  del bucket InfluxDB (usa sintaxis Flux `schema.*`, no InfluxQL `SHOW`).
+- **`verificar_saturacion_acc.py`**: cuantifica el % de muestras del
+  acelerometro saturadas en el limite de su rango dinamico, por eje y pie.
+  Uso:
+  ```bash
+  python A06_ANALISIS_CINEMATICO/tools/verificar_saturacion_acc.py \
+      --paciente CODIGO_PACIENTE \
+      --inicio "yyyy-mm-dd hh:mm:ss" \
+      --fin "yyyy-mm-dd hh:mm:ss"
+  ```
+- **`diagnosticar_eventos.py`**: subclase del orquestador que imprime una
+  "radiografia" de los huecos de deteccion de eventos > 2s por pie,
+  clasificando la causa probable (umbral insuficiente vs filtro/refractario).
+- **`plot_deriva.py`**: grafica la senal de presion plantar contra el umbral
+  de deteccion calculado, en una ventana temporal especifica, para
+  inspeccion visual. Guarda el resultado en
+  `RESULTADOS_BIOMECANICO/<paciente>/`.
+- **`diagnostico_imu.py`**: compara la calidad de la senal IMU cruda entre
+  pie derecho e izquierdo (norma de aceleracion, dispersion en stance,
+  divergencia de Madgwick a lo largo del tiempo) y realiza un barrido de
+  `madgwick_beta` buscando el valor que minimiza la dispersion de la
+  componente Z global durante los tramos de apoyo. Uso:
+  ```bash
+  python A06_ANALISIS_CINEMATICO/tools/diagnostico_imu.py \
+      --paciente CODIGO_PACIENTE \
+      --inicio "yyyy-mm-dd hh:mm:ss" \
+      --fin "yyyy-mm-dd hh:mm:ss"
+  ```
+  Guarda sus graficas en `RESULTADOS_BIOMECANICO/<paciente>/`.
+
+## Limitacion conocida: saturacion del acelerometro (+-2g)
+
+La validacion con tres pacientes reales confirmo que el acelerometro de los
+sensores SCKS satura sistematicamente en +-2g (mas frecuentemente en el eje
+de progresion, `Ay`), lo cual introduce una subestimacion estructural de la
+longitud de zancada y la asimetria MTC calculadas por doble integracion.
+Esta limitacion es independiente de la calidad de deteccion de eventos o de
+la presencia de huecos temporales (confirmado con un paciente que no
+presento ninguno de esos dos problemas). Ver la memoria en `docs/` para el
+detalle completo, incluyendo tabla comparativa de saturacion entre
+pacientes.
+
+Se recomienda ejecutar `verificar_saturacion_acc.py` sobre cualquier sesion
+nueva antes de reportar metricas espaciales (zancada, velocidad, MTC) como
+definitivas. Las metricas temporales (`stride_times`, `stance_times`,
+`swing_times`), al depender solo de la deteccion de eventos por presion
+plantar, no estan afectadas por esta limitacion.
+
+## Estructura de archivos
+
+```
+A06_ANALISIS_CINEMATICO/
+├── __init__.py
+├── README.md
+├── event_detector.py
+├── kinematic_engine.py
+├── Orquestador_biomecanico.py
+├── fatigue_analysis.py
+├── tools/
+│   ├── TESTMAGNETO.py
+│   ├── verificar_saturacion_acc.py
+│   ├── diagnosticar_eventos.py
+│   ├── plot_deriva.py
+│   └── diagnostico_imu.py
+└── docs/
+    └── MEMORIA_EXPLORACION_PIPELINE_BIOMECANICO.md
+```
 
 ---
 
