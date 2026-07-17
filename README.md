@@ -70,6 +70,12 @@ predictivos, pero se ejecuta y valida de forma independiente del bloque de DL.
 A06_ANALISIS_CINEMATICO/Orquestador_biomecanico.py
 ```
 
+> **⚠️ Antes de clonar/ejecutar — verificar este punto en el repo:**
+> `A06_ANALISIS_CINEMATICO/RESULTADOS_BIOMECANICO/` no debe estar versionada
+> con datos de pacientes ya procesados (contiene identificadores y métricas
+> clínicas). Debe figurar en `.gitignore`; cada usuario la regenera
+> localmente al ejecutar el pipeline.
+
 > **Nota de migración:** una versión previa y más simple (`run_gait_pipeline.py`
 > / `run_pipeline.py`) existió en este directorio pero fue descartada. No
 > implementaba auto-calibración de umbral, fusión con magnetómetro,
@@ -120,9 +126,8 @@ python A06_ANALISIS_CINEMATICO/Orquestador_biomecanico.py \
 
 ## Herramientas de diagnóstico (`tools/`)
 
-Desarrolladas durante la validación del pipeline con datos reales (ver
-`docs/MEMORIA_EXPLORACION_PIPELINE_BIOMECANICO.md` para el detalle completo).
-Útiles para depurar sesiones nuevas antes de confiar en sus métricas.
+Desarrolladas durante la validación del pipeline con datos reales. Útiles
+para depurar sesiones nuevas antes de confiar en sus métricas.
 
 | Script | Función |
 |---|---|
@@ -151,8 +156,7 @@ sensores SCKS satura sistemáticamente en ±2g (más frecuentemente en el eje de
 progresión, `Ay`), introduciendo una subestimación estructural de la longitud
 de zancada y la asimetría MTC calculadas por doble integración. Esta
 limitación es independiente de la calidad de detección de eventos o de la
-presencia de huecos temporales. Ver `docs/MEMORIA_EXPLORACION_PIPELINE_BIOMECANICO.md`
-para la tabla comparativa completa entre pacientes.
+presencia de huecos temporales.
 
 Se recomienda ejecutar `verificar_saturacion_acc.py` sobre cualquier sesión
 nueva antes de reportar métricas espaciales (zancada, velocidad, MTC) como
@@ -169,14 +173,12 @@ A06_ANALISIS_CINEMATICO/
 ├── kinematic_engine.py
 ├── Orquestador_biomecanico.py
 ├── fatigue_analysis.py
-├── tools/
-│   ├── TESTMAGNETO.py
-│   ├── verificar_saturacion_acc.py
-│   ├── diagnosticar_eventos.py
-│   ├── plot_deriva.py
-│   └── diagnostico_imu.py
-└── docs/
-    └── MEMORIA_EXPLORACION_PIPELINE_BIOMECANICO.md
+└── tools/
+    ├── TESTMAGNETO.py
+    ├── verificar_saturacion_acc.py
+    ├── diagnosticar_eventos.py
+    ├── plot_deriva.py
+    └── diagnostico_imu.py
 ```
 
 ---
