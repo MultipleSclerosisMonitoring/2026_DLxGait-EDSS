@@ -1,121 +1,143 @@
 # -*- coding: utf-8 -*-
 """
-TESTMAGNETO
-
-Diagnostico de escala del acelerometro.
-Verifica si Ax, Ay, Az llegan en g, en m/s^2, o en unidades crudas de ADC,
-comparando la norma de la senal durante un tramo de reposo/stance
-contra los valores esperados para cada escala posible.
+Auditor de campos InfluxDB (API Flux, InfluxDB v2).
+Lista measurements y field keys disponibles en el bucket configurado.
 """
 
+import argparse
+from pathlib import Path
+
 import yaml
-import numpy as np
 import pandas as pd
-from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
 from influxdb_client import InfluxDBClient
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
-def diagnosticar_escala_acelerometro(
-    config_path: str,
-    paciente: str,
-    pie: str,
-    inicio: datetime,
-    fin: datetime,
-    n_muestras_reposo: int = 100
-) -> None:
-    """
-    Descarga Ax, Ay, Az crudos y analiza su norma para inferir la escala real.
 
-    :param config_path: Ruta al YAML de configuracion InfluxDB.
-    :param paciente: CodeID del paciente.
-    :param pie: Foot ("Right" o "Left").
-    :param inicio: Fecha de inicio (hora local).
-    :param fin: Fecha de fin (hora local).
-    :param n_muestras_reposo: Numero de muestras iniciales asumidas en reposo/stance.
-    """
-    with open(config_path, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)["influxdb"]
+class InfluxAuditor:
+    """Auditor de campos InfluxDB usando consultas Flux."""
 
-    tzval = cfg.get("tzval", "Europe/Madrid")
-    inicio_str = inicio.replace(tzinfo=ZoneInfo(tzval)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    fin_str = fin.replace(tzinfo=ZoneInfo(tzval)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    def __init__(self, config_path: str) -> None:
+        """Inicializa conexion con parametros del YAML."""
+        with open(config_path, "r") as f:
+            self.config = yaml.safe_load(f)
 
-    client = InfluxDBClient(url=cfg["url"], token=cfg["token"], org=cfg["org"], verify_ssl=False)
+        # ACCESO AL BLOQUE ANIDADO
+        self.db_cfg = self.config["influxdb"]
 
-    metrics = ["Ax", "Ay", "Az"]
-    metrics_str = " or ".join([f'r._field == "{m}"' for m in metrics])
-    columns_str = ", ".join([f'"{m}"' for m in metrics])
+        # CONEXION IGNORANDO SSL
+        self.client = InfluxDBClient(
+            url=self.db_cfg["url"],
+            token=self.db_cfg["token"],
+            org=self.db_cfg["org"],
+            verify_ssl=False
+        )
+        self.query_api = self.client.query_api()
 
-    query = f'''
-    from(bucket: "{cfg['bucket']}")
-    |> range(start: {inicio_str}, stop: {fin_str})
-    |> filter(fn: (r) => r._measurement == "Gait")
-    |> filter(fn: (r) => {metrics_str})
-    |> filter(fn: (r) => r["CodeID"] == "{paciente}" and r["type"] == "SCKS" and r["Foot"] == "{pie}")
-    |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
-    |> keep(columns: ["_time", {columns_str}])
-    '''
+    def listar_measurements(self) -> None:
+        """Muestra todas las mediciones disponibles en el bucket, via Flux schema.measurements."""
+        bucket = self.db_cfg["bucket"]
+        query = f'''
+        import "influxdata/influxdb/schema"
+        schema.measurements(bucket: "{bucket}")
+        '''
+        tables = self.query_api.query(query, org=self.db_cfg["org"])
+
+        print("\n--- MEDICIONES DISPONIBLES ---")
+        for table in tables:
+            for record in table.records:
+                print(f"Medicion encontrada: {record.get_value()}")
+
+    def listar_field_keys(self, measurement: str) -> None:
+        """Muestra los field keys de un measurement, via Flux schema.measurementFieldKeys."""
+        bucket = self.db_cfg["bucket"]
+        query = f'''
+        import "influxdata/influxdb/schema"
+        schema.measurementFieldKeys(bucket: "{bucket}", measurement: "{measurement}")
+        '''
+        tables = self.query_api.query(query, org=self.db_cfg["org"])
+
+        print(f"\n--- FIELD KEYS DE '{measurement}' ---")
+        for table in tables:
+            for record in table.records:
+                print(f"Field: {record.get_value()}")
+
+    def listar_tag_keys(self, measurement: str) -> None:
+        """Muestra los tag keys de un measurement (utiles para saber que identifica 'pie', 'paciente', etc.)."""
+        bucket = self.db_cfg["bucket"]
+        query = f'''
+        import "influxdata/influxdb/schema"
+        schema.measurementTagKeys(bucket: "{bucket}", measurement: "{measurement}")
+        '''
+        tables = self.query_api.query(query, org=self.db_cfg["org"])
+
+        print(f"\n--- TAG KEYS DE '{measurement}' ---")
+        for table in tables:
+            for record in table.records:
+                print(f"Tag: {record.get_value()}")
+
+    def audit_and_save(self, measurement: str, output_file: str = "auditoria_campos_influx.csv") -> None:
+        """Consulta field keys de un measurement y guarda CSV."""
+        print(f"\nAuditando: {measurement}...")
+        bucket = self.db_cfg["bucket"]
+        query = f'''
+        import "influxdata/influxdb/schema"
+        schema.measurementFieldKeys(bucket: "{bucket}", measurement: "{measurement}")
+        '''
+        try:
+            tables = self.query_api.query(query, org=self.db_cfg["org"])
+            fields = [{"field": record.get_value()} for table in tables for record in table.records]
+
+            df = pd.DataFrame(fields)
+            df.to_csv(output_file, index=False)
+            print(f"EXITO: CSV guardado en {output_file}")
+            print(f"Total campos: {len(df)}")
+
+        except Exception as e:
+            print(f"ERROR en consulta: {e}")
+
+    def close(self) -> None:
+        """Cierra la conexion con InfluxDB."""
+        self.client.close()
+
+
+def main() -> None:
+    """Punto de entrada CLI."""
+    parser = argparse.ArgumentParser(description="Auditor de schema InfluxDB (Flux).")
+    parser.add_argument(
+        "--config-yaml", type=str,
+        default=str(PROJECT_ROOT / "A01_EXTRACCION_DATOS" / "config.yaml"),
+        help="Ruta al config.yaml de InfluxDB"
+    )
+    parser.add_argument(
+        "--measurement", type=str, default=None,
+        help="Nombre del measurement a auditar (si se omite, solo lista measurements disponibles)"
+    )
+    args = parser.parse_args()
+
+    auditor = InfluxAuditor(args.config_yaml)
 
     try:
-        tables = client.query_api().query(query, org=cfg["org"])
-        data = [rec.values for t in tables for rec in t.records]
-        df = pd.DataFrame(data)
+        # 1. LISTAR MEASUREMENTS PARA IDENTIFICAR TABLA
+        auditor.listar_measurements()
 
-        if df.empty:
-            print(f"\nSIN DATOS PARA {paciente}/{pie}.")
-            return
+        if args.measurement:
+            # 2. LISTAR TODOS LOS FIELDS (columnas de valores: Acc_X, Gyro_Y, Mag_Z, S0, etc.)
+            auditor.listar_field_keys(args.measurement)
 
-        acc = df[metrics].astype(float).values
-        norma_completa = np.linalg.norm(acc, axis=1)
-        norma_reposo = norma_completa[:n_muestras_reposo]
+            # 3. LISTAR TAGS (identificadores: paciente, pie, etc.)
+            auditor.listar_tag_keys(args.measurement)
 
-        print(f"\n--- DIAGNOSTICO ESCALA ACELEROMETRO: {paciente}/{pie} ---")
-        print(f"Total muestras: {len(acc)}")
-        print(f"Norma media (todas las muestras):  {norma_completa.mean():.3f}")
-        print(f"Norma media (primeras {n_muestras_reposo}, asumido reposo): {norma_reposo.mean():.3f}")
-        print(f"Norma std  (primeras {n_muestras_reposo}):                  {norma_reposo.std():.3f}")
-        print(f"Valor min / max Ax: [{acc[:,0].min():.3f}, {acc[:,0].max():.3f}]")
-        print(f"Valor min / max Ay: [{acc[:,1].min():.3f}, {acc[:,1].max():.3f}]")
-        print(f"Valor min / max Az: [{acc[:,2].min():.3f}, {acc[:,2].max():.3f}]")
-
-        print("\nCOMPARACION CONTRA ESCALAS CONOCIDAS (norma esperada en reposo = 1g):")
-        candidatos = {
-            "g (norma ~1.0)": 1.0,
-            "m/s^2 (norma ~9.81)": 9.81,
-            "ADC 16-bit +-2g (norma ~16384)": 16384.0,
-            "ADC 16-bit +-4g (norma ~8192)": 8192.0,
-            "ADC 16-bit +-8g (norma ~4096)": 4096.0,
-            "ADC 16-bit +-16g (norma ~2048)": 2048.0,
-        }
-        for nombre, esperado in candidatos.items():
-            ratio = norma_reposo.mean() / esperado
-            print(f"  {nombre:35s} -> ratio observado/esperado = {ratio:.3f}")
-
-        print(
-            "\nInterpretacion: el candidato con ratio mas cercano a 1.0 indica la escala real "
-            "en la que llega Ax/Ay/Az desde InfluxDB."
-        )
-
+            # 4. GUARDAR AUDITORIA EN CSV
+            auditor.audit_and_save(args.measurement)
+        else:
+            print(
+                "\nUsa --measurement <nombre> (ej. 'Gait') para auditar field keys, "
+                "tag keys y guardar CSV de ese measurement."
+            )
     finally:
-        client.close()
+        auditor.close()
 
 
 if __name__ == "__main__":
-    CFG_PATH = r"C:\Users\jairi\OneDrive\Escritorio\TFM_CLONADO_FINALFINAL\A01_EXTRACCION_DATOS\config.yaml"
-
-    diagnosticar_escala_acelerometro(
-        config_path=CFG_PATH,
-        paciente="TABUENCA01-45",
-        pie="Right",
-        inicio=datetime.strptime("2024-04-25 16:38:33", "%Y-%m-%d %H:%M:%S"),
-        fin=datetime.strptime("2024-04-25 16:49:05", "%Y-%m-%d %H:%M:%S")
-    )
-
-    diagnosticar_escala_acelerometro(
-        config_path=CFG_PATH,
-        paciente="TABUENCA01-45",
-        pie="Left",
-        inicio=datetime.strptime("2024-04-25 16:38:33", "%Y-%m-%d %H:%M:%S"),
-        fin=datetime.strptime("2024-04-25 16:49:05", "%Y-%m-%d %H:%M:%S")
-    )
+    main()
