@@ -70,12 +70,6 @@ predictivos, pero se ejecuta y valida de forma independiente del bloque de DL.
 A06_ANALISIS_CINEMATICO/Orquestador_biomecanico.py
 ```
 
-> **⚠️ Antes de clonar/ejecutar — verificar este punto en el repo:**
-> `A06_ANALISIS_CINEMATICO/RESULTADOS_BIOMECANICO/` no debe estar versionada
-> con datos de pacientes ya procesados (contiene identificadores y métricas
-> clínicas). Debe figurar en `.gitignore`; cada usuario la regenera
-> localmente al ejecutar el pipeline.
-
 > **Nota de migración:** una versión previa y más simple (`run_gait_pipeline.py`
 > / `run_pipeline.py`) existió en este directorio pero fue descartada. No
 > implementaba auto-calibración de umbral, fusión con magnetómetro,
@@ -163,6 +157,32 @@ nueva antes de reportar métricas espaciales (zancada, velocidad, MTC) como
 definitivas. Las métricas temporales (`stride_times`, `stance_times`,
 `swing_times`), al depender solo de la detección de eventos por presión
 plantar, no están afectadas por esta limitación.
+
+## Resultados de ejemplo (`RESULTADOS_BIOMECANICO/`)
+
+El repositorio incluye, a modo de evidencia de validación, los resultados
+generados durante las pruebas del pipeline sobre 4 sesiones reales (métricas,
+diagnósticos de saturación y de eventos). Estos archivos no son necesarios
+para ejecutar el pipeline — se regeneran automáticamente al correr
+`Orquestador_biomecanico.py` sobre cualquier paciente/rango de fechas nuevo,
+sobrescribiendo los existentes para ese mismo `CodeID`.
+
+Si se prefiere clonar el repositorio sin descargar estos archivos al disco
+(por ejemplo, para no traer datos de pacientes de ejemplo), puede usarse un
+sparse checkout:
+
+```bash
+git clone --filter=blob:none --no-checkout https://github.com/MultipleSclerosisMonitoring/2026_DLxGait-EDSS.git
+cd 2026_DLxGait-EDSS
+git sparse-checkout init --cone
+git sparse-checkout set --skip-checks '/*' '!A06_ANALISIS_CINEMATICO/RESULTADOS_BIOMECANICO'
+git checkout
+```
+
+Esto trae el historial completo del repositorio (los archivos siguen
+disponibles para consulta en GitHub y recuperables localmente con
+`git sparse-checkout disable` en cualquier momento), pero no materializa en
+disco el contenido de `RESULTADOS_BIOMECANICO/` durante el checkout.
 
 ## Estructura de archivos
 
@@ -277,6 +297,24 @@ python -m A04_TRANSFORMER.Agnostic_evaluator
 # equivalente a:
 python A04_TRANSFORMER/Agnostic_evaluator.py
 ```
+
+## Estructura de archivos
+
+```
+A04_TRANSFORMER/
+├── __init__.py
+├── AA_TRANSFORMER_V1.py
+├── Agnostic_evaluator.py
+├── EVALUACION_MODELOS.py
+└── test_pipeline.py
+```
+
+| Script | Función |
+|---|---|
+| `AA_TRANSFORMER_V1.py` | Entrenamiento de los tres modelos (Temporal, FFT, Híbrido) a partir del dataset HDF5; guarda pesos, escalador y config |
+| `Agnostic_evaluator.py` | Inferencia continua sobre un paciente/rango temporal usando los modelos ya entrenados |
+| `EVALUACION_MODELOS.py` | Evaluación y validación de los modelos entrenados, incluyendo la prueba de estrés LOPO (`run_lopo_stress_test`) y generación de métricas/gráficas de validación |
+| `test_pipeline.py` | Tests unitarios del pipeline de Deep Learning |
 
 ## Arquitectura del modelo
 
