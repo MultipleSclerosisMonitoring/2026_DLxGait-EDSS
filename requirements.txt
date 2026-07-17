@@ -15,4 +15,4 @@ seaborn
 ahrs
 openpyxl
 pyarrow
-zoneinfo
+tzdata
