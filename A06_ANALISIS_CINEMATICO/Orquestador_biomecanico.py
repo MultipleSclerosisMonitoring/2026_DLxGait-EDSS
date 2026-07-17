@@ -54,10 +54,7 @@ class PipelineConfig(BaseModel):
     config_yaml_path: Path = Field(..., description="Ruta config InfluxDB")
     fs: int = Field(default=100, gt=0)
     output_dir: Path = Field(
-        default=Path(
-            r"C:\Users\jairi\OneDrive\Escritorio\TFM_CLONADO_FINALFINAL"
-            r"\A06_ANALISIS_CINEMATICO\RESULTADOS_BIOMECANICO"
-        )
+        default_factory=lambda: PROJECT_ROOT / "A06_ANALISIS_CINEMATICO" / "RESULTADOS_BIOMECANICO"
     )
     fatigue_target: str = Field(default="Gait_Speed_ms")
     max_time_diff_s: float = Field(default=0.20, gt=0.0)
@@ -499,13 +496,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--th-left", type=float, default=None)
     parser.add_argument("--sin-auto-calibrar", action="store_true")
     parser.add_argument("--max-stride", type=float, default=1.9)
+    parser.add_argument(
+        "--output-dir", type=str, default=None,
+        help="Directorio de salida para resultados. Por defecto: "
+             "A06_ANALISIS_CINEMATICO/RESULTADOS_BIOMECANICO dentro del proyecto."
+    )
     return parser.parse_args()
 
 
 def construir_config(args: argparse.Namespace) -> PipelineConfig:
     """Valida argumentos y emite config."""
     cfg_path = Path(args.config_yaml) if args.config_yaml else PROJECT_ROOT / "A01_EXTRACCION_DATOS" / "config.yaml"
-    return PipelineConfig(
+    kwargs = dict(
         paciente=args.paciente,
         inicio=datetime.strptime(args.inicio, "%Y-%m-%d %H:%M:%S"),
         fin=datetime.strptime(args.fin, "%Y-%m-%d %H:%M:%S"),
@@ -518,6 +520,9 @@ def construir_config(args: argparse.Namespace) -> PipelineConfig:
         auto_calibrar_umbral=not args.sin_auto_calibrar,
         max_stride_m=args.max_stride
     )
+    if getattr(args, "output_dir", None):
+        kwargs["output_dir"] = Path(args.output_dir)
+    return PipelineConfig(**kwargs)
 
 
 def main() -> None:
