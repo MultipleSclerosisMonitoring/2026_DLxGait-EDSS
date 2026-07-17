@@ -224,10 +224,19 @@ python A03_PREPROCESAMIENTO/LIMPIEZA.py \
 ## Opción A — Entrenar modelos desde cero
 
 ```bash
-python A04_TRANSFORMER\AA_TRANSFORMER_V1.py ^
-    --dataset "DATASET_LISTO\dataset_jerarquico.hdf5" ^
+python A04_TRANSFORMER/AA_TRANSFORMER_V1.py \
+    --dataset "DATASET_LISTO/dataset_jerarquico.hdf5" \
     --out_dir "A05_MODELOS_ENTRENADOS"
 ```
+
+> **Requisitos de hardware:** el entrenamiento usa GPU (CUDA) de forma
+> automática si está disponible (`torch.cuda.is_available()`), incluyendo
+> mixed precision (AMP) para acelerar. Si no hay GPU, el código cae
+> automáticamente a CPU sin necesidad de modificar nada — pero el
+> entrenamiento de los tres modelos (Temporal, FFT, Híbrido) será
+> considerablemente más lento. No se ha determinado un requisito mínimo de
+> VRAM ni un tiempo de entrenamiento de referencia; quedan pendientes de
+> medición empírica.
 
 Entrena automáticamente: Transformer Temporal, Clasificador FFT, Modelo
 Híbrido Tiempo + Frecuencia; calcula el umbral óptimo, guarda el escalador
@@ -254,11 +263,11 @@ Con los modelos y escaladores ya en `A05_MODELOS_ENTRENADOS`, se puede saltar
 el entrenamiento y ejecutar el evaluador agnóstico directamente:
 
 ```bash
-python A04_TRANSFORMER\Agnostic_evaluator.py ^
-    -c A01_EXTRACCION_DATOS\config.yaml ^
-    -m A05_MODELOS_ENTRENADOS ^
-    -r CODIGO_PACIENTE ^
-    --start "yyyy-mm-ddThh:mm:ssZ" ^
+python A04_TRANSFORMER/Agnostic_evaluator.py \
+    -c A01_EXTRACCION_DATOS/config.yaml \
+    -m A05_MODELOS_ENTRENADOS \
+    -r CODIGO_PACIENTE \
+    --start "yyyy-mm-ddThh:mm:ssZ" \
     --end "yyyy-mm-ddThh:mm:ssZ"
 ```
 
