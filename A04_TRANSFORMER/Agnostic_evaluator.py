@@ -177,7 +177,12 @@ class AgnosticEvaluator:
     def run_inference(self, aligned_data: Dict[str, pd.DataFrame], start: datetime) -> pd.DataFrame:
         """Computes PSD Spectrograms and runs rolling window inference."""
         logger.info("EXTRAYENDO ESPECTROGRAMAS PARA INFERENCIA CONTINUA...")
-        lfeat = ['acc_mag','gyro_mag','S0','S1','S2']
+        # INCLUYE mag_mag: GaitFeatureExtractor.stack_features (extract_data_plus.py)
+        # tiene el orden de features hardcodeado como
+        # ["acc_mag", "gyro_mag", "mag_mag", "S0", "S1", "S2"], por lo que
+        # omitir "mag_mag" aqui provoca KeyError: 'mag_mag' en stack_features,
+        # independientemente de si el modelo entrenado realmente lo usa.
+        lfeat = ['acc_mag', 'gyro_mag', 'mag_mag', 'S0', 'S1', 'S2']
         
         # EXTRACCION USANDO LA CLASE REFACTORIZADA
         extractor = GaitFeatureExtractor(params=self.extraction_params, lfeat=lfeat)
@@ -311,4 +316,4 @@ def main() -> None:
         sys.exit(1)
 
 if __name__ == "__main__":
-    main() 
+    main()
