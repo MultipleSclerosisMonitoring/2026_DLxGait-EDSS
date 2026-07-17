@@ -242,26 +242,40 @@ Entrena automáticamente: Transformer Temporal, Clasificador FFT, Modelo
 Híbrido Tiempo + Frecuencia; guarda el escalador (`scaler_gait.joblib`),
 exporta pesos (`.pth`) y genera métricas/gráficas de validación.
 
-> **Nota sobre el umbral de clasificación:** `Agnostic_evaluator.py` no
-> carga un umbral óptimo desde disco — usa un valor fijo definido en el
-> propio script. Por eso `optimal_threshold_hibrido.joblib` no forma parte
-> de los artefactos necesarios para la inferencia agnóstica, aunque
-> versiones anteriores de este documento lo mencionaran como tal.
+> **Nota sobre el umbral de clasificación:** `Agnostic_evaluator.py` carga
+> al menos un umbral óptimo desde disco en tiempo de inferencia (se ha
+> observado que intenta leer `optimal_threshold_fft.joblib`). Confirmar qué
+> archivos de umbral exactos genera `AA_TRANSFORMER_V1.py` por modelo
+> (Transformer, FFT, Híbrido) y asegurarse de que estén presentes en
+> `A05_MODELOS_ENTRENADOS/` antes de ejecutar el evaluador agnóstico; su
+> ausencia provoca un fallo en tiempo de ejecución.
 
-Archivos generados en `A05_MODELOS_ENTRENADOS/` (confirmado contra una
-ejecución real):
+Archivos necesarios en `A05_MODELOS_ENTRENADOS/` para el evaluador agnóstico
+(confirmado contra una ejecución real):
 ```
 modelo_transformer.pth
 modelo_fft.pth
 modelo_hibrido.pth
 scaler_gait.joblib
 transformer_config.joblib
+optimal_threshold_fft.joblib      (fijo en 0.5; no lo genera AA_TRANSFORMER_V1.py)
 train_idx.npy
 val_idx.npy
 test_idx.npy
 ANALISIS_MODELOS/
 LOPO/
 ```
+
+> **Nota sobre el umbral de clasificación:** el proyecto usa un umbral de
+> decisión fijo de **0.5** (no un umbral óptimo tipo Youden's J calculado
+> por validación), por decisión de diseño documentada. Aun así,
+> `Agnostic_evaluator.py` requiere que exista físicamente el archivo
+> `optimal_threshold_fft.joblib` en `A05_MODELOS_ENTRENADOS/` (lo carga con
+> `joblib.load(...)` sin comprobar su existencia antes). Si ese archivo no
+> está presente, generarlo antes de ejecutar el evaluador:
+> ```bash
+> python -c "import joblib; joblib.dump(0.5, 'A05_MODELOS_ENTRENADOS/optimal_threshold_fft.joblib')"
+> ```
 
 > Las subcarpetas `ANALISIS_MODELOS/` y `LOPO/` corresponden a la evaluación
 > y a la prueba de estrés LOPO (`run_lopo_stress_test`), generadas por
