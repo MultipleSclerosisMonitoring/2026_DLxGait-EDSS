@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Script de evaluacion para modelos de marcha.
+Script de evaluacion para modelos de marcha. Posterior al entrenamiento.
 Carga modelos preentrenados, calcula metricas y genera reportes.
+Evaluación con Leave-One-Patient-Out (LOPO).
 """
 
 from __future__ import annotations
@@ -492,7 +493,7 @@ def main() -> None:
         f_txt.write(texto_final)
     logger.info("DOCUMENTO DE TEXTO GENERADO CORRECTAMENTE")
 
-    # DISPARAR ENTORNO LOPO OPCIONAL
+   # DISPARAR ENTORNO LOPO OPCIONAL
     
     LOPO_DIR = EVAL_GENERAL_DIR / "LOPO_HIBRIDO"
     LOPO_DIR.mkdir(parents=True, exist_ok=True)
@@ -501,9 +502,9 @@ def main() -> None:
         x_all, groups_all, y_all = loader.get_all_raw_data()
         train_cfg = TrainConfig(device=DEVICE)
         run_lopo_evaluation(x_all, y_all, groups_all, m1_cfg, train_cfg, EVAL_DIR)
+        run_lopo_evaluation_fft(x_all, y_all, groups_all, train_cfg, EVAL_DIR)
     else:
         logger.info("EVALUACION LOPO OMITIDA: Use --run-lopo para lanzar validacion cruzada paciente a paciente.")
-
 
 # =============================================================================
 # SECCION EXCLUSIVA: LOGICA PARA LEAVE-ONE-PATIENT-OUT (LOPO)
@@ -518,8 +519,15 @@ def run_lopo_evaluation(
     eval_dir: Path
 ) -> None:
     """
-    LOPO real: reentrena el modelo híbrido desde cero en cada fold,
+    LOPO real: reentrena el modelo hibrido desde cero en cada fold,
     dejando siempre un paciente distinto fuera de train/val.
+
+    :param x_all: Tensores crudos de todos los pacientes, forma (N, steps, features).
+    :param y_all: Etiquetas binarias (reposo/marcha) por muestra.
+    :param groups_all: Identificador de paciente por muestra, usado por LeaveOneGroupOut.
+    :param t_cfg: Configuracion estructural del Transformer (rama temporal del hibrido).
+    :param train_cfg: Hiperparametros de entrenamiento (batch_size, epochs, lr, patience, device).
+    :param eval_dir: Directorio donde se exportan CSVs y la matriz de confusion global.
     """
     logo = LeaveOneGroupOut()
     fft_proc = FFTProcessor()
@@ -531,7 +539,7 @@ def run_lopo_evaluation(
     patient_ids: List[str] = []
 
     logger.info(
-        f"INICIANDO LOPO REAL (REENTRENAMIENTO POR FOLD) — {len(unique_p)} PACIENTES"
+        f"INICIANDO LOPO REAL HIBRIDO (REENTRENAMIENTO POR FOLD) — {len(unique_p)} PACIENTES"
     )
 
     for fold, (trainval_idx, test_idx) in enumerate(
@@ -554,12 +562,12 @@ def run_lopo_evaluation(
         # Debe haber ambas clases en entrenamiento y prueba
         if len(np.unique(y_tr)) < 2 or len(np.unique(y_ts)) < 2:
             logger.warning(
-                f"FOLD {fold} ({test_patient}) OMITIDO — CLASE ÚNICA"
+                f"FOLD {fold} ({test_patient}) OMITIDO — CLASE UNICA"
             )
             continue
 
         # ---------------------------------------------------------------------
-        # Escalado (fit únicamente con entrenamiento)
+        # Escalado (fit unicamente con entrenamiento)
         # ---------------------------------------------------------------------
         sc = StandardScaler()
 
@@ -612,7 +620,7 @@ def run_lopo_evaluation(
         model_fold = trainer.train(tr_l, val_l)
 
         # ---------------------------------------------------------------------
-        # Evaluación del paciente reservado
+        # Evaluacion del paciente reservado
         # ---------------------------------------------------------------------
         model_fold.eval()
 
@@ -650,90 +658,336 @@ def run_lopo_evaluation(
         torch.cuda.empty_cache()
         gc.collect()
 
-    # =========================================================================
-    # RESULTADOS GLOBALES
-    # =========================================================================
+    _finalizar_lopo(
+        all_y_true=all_y_true,
+        all_y_prob=all_y_prob,
+        fold_scores=fold_scores,
+        patient_ids=patient_ids,
+        eval_dir=eval_dir,
+        prefijo="hibrido",
+        titulo_grafica="LOPO REAL HIBRIDO — Reentrenado por Fold"
+    )
 
-    if all_y_true:
 
-        auc_global = roc_auc_score(all_y_true, all_y_prob)
+def run_lopo_evaluation_fft(
+    x_all: np.ndarray,
+    y_all: np.ndarray,
+    groups_all: np.ndarray,
+    train_cfg: TrainConfig,
+    eval_dir: Path
+) -> None:
+    """
+    LOPO real para el modelo FFT puro: reentrena FFTModel desde cero en
+    cada fold, dejando siempre un paciente distinto fuera de train/val.
+
+    Analoga a run_lopo_evaluation, pero usa unicamente la rama frecuencial
+    (FFTModel) en vez del modelo hibrido, sin la rama temporal Transformer.
+    Se guarda en archivos separados (prefijo "fft") para no sobreescribir
+    los resultados LOPO del hibrido.
+
+    :param x_all: Tensores crudos de todos los pacientes, forma (N, steps, features).
+    :param y_all: Etiquetas binarias (reposo/marcha) por muestra.
+    :param groups_all: Identificador de paciente por muestra, usado por LeaveOneGroupOut.
+    :param train_cfg: Hiperparametros de entrenamiento (batch_size, epochs, lr, patience, device).
+    :param eval_dir: Directorio donde se exportan CSVs y la matriz de confusion global.
+    """
+    logo = LeaveOneGroupOut()
+    fft_proc = FFTProcessor()
+    unique_p = np.unique(groups_all)
+
+    all_y_true: List[int] = []
+    all_y_prob: List[float] = []
+    fold_scores: List[float] = []
+    patient_ids: List[str] = []
+
+    logger.info(
+        f"INICIANDO LOPO REAL FFT (REENTRENAMIENTO POR FOLD) — {len(unique_p)} PACIENTES"
+    )
+
+    for fold, (trainval_idx, test_idx) in enumerate(
+        logo.split(x_all, y_all, groups_all), 1
+    ):
+
+        test_patient = groups_all[test_idx][0]
+
+        trainval_patients = np.unique(groups_all[trainval_idx])
+        val_patient = trainval_patients[-1]
+
+        val_mask = groups_all[trainval_idx] == val_patient
+        train_idx_f = trainval_idx[~val_mask]
+        val_idx_f = trainval_idx[val_mask]
+
+        x_tr, y_tr = x_all[train_idx_f], y_all[train_idx_f]
+        x_val, y_val = x_all[val_idx_f], y_all[val_idx_f]
+        x_ts, y_ts = x_all[test_idx], y_all[test_idx]
+
+        # Debe haber ambas clases en entrenamiento y prueba
+        if len(np.unique(y_tr)) < 2 or len(np.unique(y_ts)) < 2:
+            logger.warning(
+                f"FOLD {fold} ({test_patient}) OMITIDO — CLASE UNICA"
+            )
+            continue
+
+        # ---------------------------------------------------------------------
+        # Escalado (fit unicamente con entrenamiento)
+        # ---------------------------------------------------------------------
+        sc = StandardScaler()
+
+        x_tr_s = sc.fit_transform(
+            x_tr.reshape(-1, x_tr.shape[2])
+        ).reshape(x_tr.shape).astype(np.float32)
+
+        x_val_s = sc.transform(
+            x_val.reshape(-1, x_val.shape[2])
+        ).reshape(x_val.shape).astype(np.float32)
+
+        x_ts_s = sc.transform(
+            x_ts.reshape(-1, x_ts.shape[2])
+        ).reshape(x_ts.shape).astype(np.float32)
+
+        # ---------------------------------------------------------------------
+        # FFT (unica representacion de entrada para este modelo)
+        # ---------------------------------------------------------------------
+        x_tr_fft = fft_proc.get_fft_features(x_tr_s).reshape(x_tr_s.shape[0], -1)
+        x_val_fft = fft_proc.get_fft_features(x_val_s).reshape(x_val_s.shape[0], -1)
+        x_ts_fft = fft_proc.get_fft_features(x_ts_s).reshape(x_ts_s.shape[0], -1)
+
+        fft_dim = x_tr_fft.shape[1]
+
+        sampler = make_weighted_sampler(y_tr)
+
+        # NOTA: StandardDataset (2 elementos: x, y), no MultiModalDataset,
+        # ya que FFTModel solo recibe una entrada (forward(self, x))
+        tr_l = DataLoader(
+            StandardDataset(x_tr_fft, y_tr),
+            batch_size=train_cfg.batch_size,
+            sampler=sampler,
+            drop_last=True
+        )
+
+        val_l = DataLoader(
+            StandardDataset(x_val_fft, y_val),
+            batch_size=train_cfg.batch_size
+        )
+
+        ts_l = DataLoader(
+            StandardDataset(x_ts_fft, y_ts),
+            batch_size=train_cfg.batch_size
+        )
+
+        # ---------------------------------------------------------------------
+        # Entrenamiento desde cero
+        # ---------------------------------------------------------------------
+        model_fold = FFTModel(fft_dim).to(train_cfg.device)
+
+        trainer = GaitTrainerFFT(model_fold, train_cfg)
+        model_fold = trainer.train(tr_l, val_l)
+
+        # ---------------------------------------------------------------------
+        # Evaluacion del paciente reservado
+        # ---------------------------------------------------------------------
+        model_fold.eval()
+
+        probs_fold = []
+        y_true_fold = []
+
+        with torch.no_grad():
+            for xb, yb in ts_l:
+                out = model_fold(xb.to(train_cfg.device))
+
+                probs_fold.extend(
+                    torch.softmax(out, dim=1)[:, 1].cpu().numpy()
+                )
+
+                y_true_fold.extend(yb.numpy())
+
+        auc = roc_auc_score(y_true_fold, probs_fold)
+
+        fold_scores.append(auc)
+        patient_ids.append(str(test_patient))
+
+        all_y_true.extend(y_true_fold)
+        all_y_prob.extend(probs_fold)
 
         logger.info(
-            f"LOPO REAL — "
-            f"AUC PROMEDIO={np.mean(fold_scores):.4f} "
-            f"STD={np.std(fold_scores):.4f} "
-            f"| GLOBAL={auc_global:.4f}"
+            f"FOLD {fold:02d} | PACIENTE={test_patient} | "
+            f"AUC={auc:.4f} | N_TEST={len(y_true_fold)}"
         )
 
-        pd.DataFrame({
-            "fold": range(1, len(fold_scores) + 1),
-            "paciente": patient_ids,
-            "auc": fold_scores
-        }).to_csv(
-            eval_dir / "lopo_fold_aucs_eval.csv",
-            index=False
-        )
+        del model_fold, trainer, tr_l, val_l, ts_l
 
-        umbral_global = 0.50
+        torch.cuda.empty_cache()
+        gc.collect()
 
-        y_pred_global = (np.array(all_y_prob) >= umbral_global).astype(int)
+    _finalizar_lopo(
+        all_y_true=all_y_true,
+        all_y_prob=all_y_prob,
+        fold_scores=fold_scores,
+        patient_ids=patient_ids,
+        eval_dir=eval_dir,
+        prefijo="fft",
+        titulo_grafica="LOPO REAL FFT — Reentrenado por Fold"
+    )
 
-        cm_global = confusion_matrix(
-            all_y_true,
-            y_pred_global,
-            labels=[0, 1]
-        )
 
-        tn, fp, fn, tp = cm_global.ravel()
+class GaitTrainerFFT:
+    """
+    Bucle de entrenamiento con early stopping para el modelo FFT puro
+    (2 elementos por batch: x, y), analogo a GaitTrainer pero sin la
+    rama temporal del hibrido.
+    """
+    def __init__(self, model: nn.Module, config: TrainConfig) -> None:
+        self.model = model.to(config.device)
+        self.config = config
+        self.criterion = nn.CrossEntropyLoss()
+        self.optimizer = optim.Adam(self.model.parameters(), lr=config.lr)
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor=0.5, patience=5)
+        self.best_state = None
 
-        pd.DataFrame([{
-            "AUC": auc_global,
-            "Sensibilidad": tp / (tp + fn),
-            "Especificidad": tn / (tn + fp),
-            "FPR": fp / (fp + tn),
-            "Threshold": umbral_global
-        }]).to_csv(
-            eval_dir / "metricas_lopo.csv",
-            index=False
-        )
+    def train(self, train_loader: DataLoader, val_loader: DataLoader) -> nn.Module:
+        """Entrena con early stopping segun AUC de validacion."""
+        best_auc, no_improve = 0.0, 0
+        for epoch in range(self.config.epochs):
+            self.model.train()
+            for xb, yb in train_loader:
+                self.optimizer.zero_grad()
+                out = self.model(xb.to(self.config.device))
+                loss = self.criterion(out, yb.to(self.config.device))
+                loss.backward()
+                self.optimizer.step()
 
-        brier, inter, pend = calibration_metrics(
-            np.array(all_y_true),
-            np.array(all_y_prob)
-        )
+            val_auc = self._evaluate_auc(val_loader)
+            self.scheduler.step(val_auc)
 
-        pd.DataFrame([{
-            "AUC": auc_global,
-            "Brier": brier,
-            "Intercepto": inter,
-            "Pendiente": pend
-        }]).to_csv(
-            eval_dir / "calibracion_lopo.csv",
-            index=False
-        )
+            if val_auc > best_auc:
+                best_auc, no_improve = val_auc, 0
+                self.best_state = copy.deepcopy(self.model.state_dict())
+            else:
+                no_improve += 1
+            if no_improve >= self.config.patience:
+                break
 
-        disp = ConfusionMatrixDisplay(
-            confusion_matrix=cm_global,
-            display_labels=["Reposo", "Marcha"]
-        )
+        if self.best_state:
+            self.model.load_state_dict(self.best_state)
+        return self.model
 
-        fig, ax = plt.subplots(figsize=(6, 5))
-        disp.plot(ax=ax, cmap="Blues")
+    def _evaluate_auc(self, loader: DataLoader) -> float:
+        """Calcula AUC de validacion, o 0.0 si solo hay una clase presente."""
+        self.model.eval()
+        y_true, y_prob = [], []
+        with torch.no_grad():
+            for xb, yb in loader:
+                out = self.model(xb.to(self.config.device))
+                y_prob.extend(torch.softmax(out, dim=1)[:, 1].cpu().numpy())
+                y_true.extend(yb.numpy())
+        return roc_auc_score(y_true, y_prob) if len(set(y_true)) > 1 else 0.0
 
-        plt.title(
-            f"LOPO REAL — Reentrenado por Fold\n"
-            f"AUC: {auc_global:.4f} | Umbral: {umbral_global:.2f}"
-        )
 
-        plt.savefig(
-            eval_dir / "LOPO_Global_Eval_Matriz.png",
-            dpi=300,
-            bbox_inches="tight"
-        )
+def _finalizar_lopo(
+    all_y_true: List[int],
+    all_y_prob: List[float],
+    fold_scores: List[float],
+    patient_ids: List[str],
+    eval_dir: Path,
+    prefijo: str,
+    titulo_grafica: str
+) -> None:
+    """
+    Consolida resultados de un esquema LOPO (fold-por-fold ya ejecutados)
+    en CSVs de AUC por fold, metricas globales, calibracion y matriz de
+    confusion, compartido por run_lopo_evaluation y run_lopo_evaluation_fft.
 
-        plt.close(fig)
+    :param all_y_true: Etiquetas reales concatenadas de todos los folds.
+    :param all_y_prob: Probabilidades predichas concatenadas de todos los folds.
+    :param fold_scores: AUC individual de cada fold (paciente dejado fuera).
+    :param patient_ids: Identificador de paciente correspondiente a cada fold.
+    :param eval_dir: Directorio de salida.
+    :param prefijo: Prefijo de archivo ("hibrido" o "fft") para no sobreescribir
+        resultados de un modelo con los de otro.
+    :param titulo_grafica: Titulo mostrado en la matriz de confusion exportada.
+    """
+    if not all_y_true:
+        logger.warning(f"LOPO ({prefijo.upper()}): SIN RESULTADOS PARA CONSOLIDAR")
+        return
 
-        logger.info("MATRIZ GRAFICA LOPO EXPORTADA CON EXITO")
+    auc_global = roc_auc_score(all_y_true, all_y_prob)
+
+    logger.info(
+        f"LOPO REAL {prefijo.upper()} — "
+        f"AUC PROMEDIO={np.mean(fold_scores):.4f} "
+        f"STD={np.std(fold_scores):.4f} "
+        f"| GLOBAL={auc_global:.4f}"
+    )
+
+    pd.DataFrame({
+        "fold": range(1, len(fold_scores) + 1),
+        "paciente": patient_ids,
+        "auc": fold_scores
+    }).to_csv(
+        eval_dir / f"lopo_fold_aucs_eval_{prefijo}.csv",
+        index=False
+    )
+
+    umbral_global = 0.50
+
+    y_pred_global = (np.array(all_y_prob) >= umbral_global).astype(int)
+
+    cm_global = confusion_matrix(
+        all_y_true,
+        y_pred_global,
+        labels=[0, 1]
+    )
+
+    tn, fp, fn, tp = cm_global.ravel()
+
+    pd.DataFrame([{
+        "AUC": auc_global,
+        "Sensibilidad": tp / (tp + fn),
+        "Especificidad": tn / (tn + fp),
+        "FPR": fp / (fp + tn),
+        "Threshold": umbral_global
+    }]).to_csv(
+        eval_dir / f"metricas_lopo_{prefijo}.csv",
+        index=False
+    )
+
+    brier, inter, pend = calibration_metrics(
+        np.array(all_y_true),
+        np.array(all_y_prob)
+    )
+
+    pd.DataFrame([{
+        "AUC": auc_global,
+        "Brier": brier,
+        "Intercepto": inter,
+        "Pendiente": pend
+    }]).to_csv(
+        eval_dir / f"calibracion_lopo_{prefijo}.csv",
+        index=False
+    )
+
+    disp = ConfusionMatrixDisplay(
+        confusion_matrix=cm_global,
+        display_labels=["Reposo", "Marcha"]
+    )
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    disp.plot(ax=ax, cmap="Blues")
+
+    plt.title(
+        f"{titulo_grafica}\n"
+        f"AUC: {auc_global:.4f} | Umbral: {umbral_global:.2f}"
+    )
+
+    plt.savefig(
+        eval_dir / f"LOPO_Global_Eval_Matriz_{prefijo}.png",
+        dpi=300,
+        bbox_inches="tight"
+    )
+
+    plt.close(fig)
+
+    logger.info(f"MATRIZ GRAFICA LOPO ({prefijo.upper()}) EXPORTADA CON EXITO")
 
 
 if __name__ == "__main__":
