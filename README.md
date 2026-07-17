@@ -239,23 +239,33 @@ python A04_TRANSFORMER/AA_TRANSFORMER_V1.py \
 > medición empírica.
 
 Entrena automáticamente: Transformer Temporal, Clasificador FFT, Modelo
-Híbrido Tiempo + Frecuencia; calcula el umbral óptimo, guarda el escalador
-(`scaler_gait.joblib`), exporta pesos (`.pth`) y genera métricas/gráficas de
-validación.
+Híbrido Tiempo + Frecuencia; guarda el escalador (`scaler_gait.joblib`),
+exporta pesos (`.pth`) y genera métricas/gráficas de validación.
 
-Archivos generados en `A05_MODELOS_ENTRENADOS/`:
+> **Nota sobre el umbral de clasificación:** `Agnostic_evaluator.py` no
+> carga un umbral óptimo desde disco — usa un valor fijo definido en el
+> propio script. Por eso `optimal_threshold_hibrido.joblib` no forma parte
+> de los artefactos necesarios para la inferencia agnóstica, aunque
+> versiones anteriores de este documento lo mencionaran como tal.
+
+Archivos generados en `A05_MODELOS_ENTRENADOS/` (confirmado contra una
+ejecución real):
 ```
 modelo_transformer.pth
 modelo_fft.pth
 modelo_hibrido.pth
 scaler_gait.joblib
-optimal_threshold_hibrido.joblib
 transformer_config.joblib
-graficas/
-├── MODELO_TRANSFORMER_Matriz_Confusion.png
-├── MODELO_FFT_Matriz_Confusion.png
-└── MODELO_HIBRIDO_FINAL_Matriz_Confusion.png
+train_idx.npy
+val_idx.npy
+test_idx.npy
+ANALISIS_MODELOS/
+LOPO/
 ```
+
+> Las subcarpetas `ANALISIS_MODELOS/` y `LOPO/` corresponden a la evaluación
+> y a la prueba de estrés LOPO (`run_lopo_stress_test`), generadas por
+> `EVALUACION_MODELOS.py`, no por `AA_TRANSFORMER_V1.py` directamente.
 
 ## Opción B — Inferencia con modelos preentrenados
 
