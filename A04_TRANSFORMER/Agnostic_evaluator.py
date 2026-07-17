@@ -21,6 +21,9 @@ import joblib
 import numpy as np
 import pandas as pd
 import torch
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from scipy.fft import rfft
 
 # =========================================================
@@ -101,16 +104,12 @@ class AgnosticEvaluator:
         self.model_hybrid.eval()
         logger.info("TODOS LOS MODELOS CARGADOS (TIEMPO, FFT, HIBRIDO)")
 
-        # CARGAR THRESHOLD
-        threshold_data = joblib.load(
-              self.model_dir / "optimal_threshold_fft.joblib"
-        )
-        if isinstance(threshold_data, dict):
-            self.threshold = threshold_data.get("youden_threshold", 0.5)
-        else:
-            self.threshold = float(threshold_data)
-            
-        logger.info(f"UMBRAL OPTIMO: {self.threshold:.6f}")    
+        # UMBRAL FIJO POR DECISION DE DISENO (no calibrado tipo Youden's J).
+        # No se carga desde disco: un .joblib de umbral mal generado o
+        # sobrescrito accidentalmente (ej. con un valor casi cero) haria que
+        # el modelo clasifique casi todo como "marcha" sin ningun aviso.
+        self.threshold = 0.5
+        logger.info(f"UMBRAL FIJO (POR DISENO): {self.threshold:.6f}")
 
     def fetch_and_align_stream(self, reference: str, start: datetime, end: datetime) -> Dict[str, pd.DataFrame]:
         """Queries continuous sensor streams and normalizes timebase via Object Oriented Aligner."""
@@ -253,6 +252,41 @@ class AgnosticEvaluator:
         
         return pd.DataFrame()
 
+def graficar_timeline(df: pd.DataFrame, threshold: float, reference: str, output_dir: Path) -> Path:
+    """
+    Genera la grafica de linea de tiempo de inferencia (probabilidad
+    suavizada vs umbral) y la guarda en output_dir.
+
+    :param df: DataFrame con columnas 'timestamp' y 'prob_smoothed'.
+    :param threshold: Umbral de decision usado, para la linea de referencia.
+    :param reference: Identificador del paciente, usado en el titulo/nombre.
+    :param output_dir: Carpeta donde se guarda la imagen.
+    :return: Ruta del archivo PNG generado.
+    """
+    df_plot = df.copy()
+    df_plot["timestamp"] = pd.to_datetime(df_plot["timestamp"])
+
+    fig, ax = plt.subplots(figsize=(14, 5))
+    ax.plot(df_plot["timestamp"], df_plot["prob_smoothed"], label="Probabilidad", linewidth=1.2)
+    ax.axhline(threshold, color="black", linestyle="--", label=f"Umbral {threshold:.2f}")
+
+    ax.set_title("Linea de Tiempo Inferencia")
+    ax.set_xlabel("Tiempo")
+    ax.set_ylabel("Probabilidad de Marcha")
+    ax.set_ylim(-0.02, 1.02)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.autofmt_xdate()
+    fig.tight_layout()
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    out_path = output_dir / f"{reference}_agnostico_timeline.png"
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+    return out_path
+
+
 # =========================================================
 # ENTRYPOINT CLI
 # =========================================================
@@ -264,7 +298,11 @@ def main() -> None:
     parser.add_argument("-r", "--reference", type=str, required=True)
     parser.add_argument("--start", type=str, required=True)
     parser.add_argument("--end", type=str, required=True)
-    parser.add_argument("-o", "--output", type=Path, default=Path("./continuous_eval.csv"))
+    parser.add_argument(
+        "-o", "--output-dir", type=Path,
+        default=Path(__file__).resolve().parent / "RESULTADO_AGNOSTIC",
+        help="Carpeta donde se guardan el CSV y la grafica de resultados."
+    )
     args = parser.parse_args()
 
     try:
@@ -305,9 +343,17 @@ def main() -> None:
         inference_report = evaluator.run_inference(aligned_streams, start_dt)
 
         if not inference_report.empty:
-            inference_report.to_csv(args.output, index=False)
-            logger.info(f"RESULTADOS GUARDADOS EN: {args.output}")
+            args.output_dir.mkdir(parents=True, exist_ok=True)
+
+            csv_path = args.output_dir / f"agnostico_{args.reference}.csv"
+            inference_report.to_csv(csv_path, index=False)
+            logger.info(f"RESULTADOS GUARDADOS EN: {csv_path}")
             logger.info(f"TOTAL PREDICCIONES GENERADAS: {len(inference_report)}")
+
+            png_path = graficar_timeline(
+                inference_report, evaluator.threshold, args.reference, args.output_dir
+            )
+            logger.info(f"GRAFICA GUARDADA EN: {png_path}")
         else:
             logger.warning("SIN PREDICCIONES: INTERVALO TEMPORAL MUY CORTO.")
 
