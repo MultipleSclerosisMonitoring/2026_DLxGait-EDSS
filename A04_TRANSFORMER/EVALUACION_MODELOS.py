@@ -520,8 +520,6 @@ def run_lopo_evaluation(
     """
     LOPO real: reentrena el modelo híbrido desde cero en cada fold,
     dejando siempre un paciente distinto fuera de train/val.
-    Se excluyen previamente los pacientes con errores confirmados de
-    etiquetado para evitar sesgos en la evaluación.
     """
     logo = LeaveOneGroupOut()
     fft_proc = FFTProcessor()
