@@ -16,14 +16,21 @@ y clasificación de marcha para datos obtenidos mediante calcetines inteligentes
 estimar automáticamente el **EDSS** (Expanded Disability Status Scale) a partir
 de biomarcadores de marcha.
 
-El sistema se organiza en dos bloques independientes:
+El sistema se organiza en tres bloques:
 
 1. **Pipeline biomecánico (`A06_ANALISIS_CINEMATICO`)** — extracción, detección
-   de eventos de marcha, reconstrucción cinemática 3D y biomarcadores
-   espaciotemporales/fatiga. No depende del bloque de Deep Learning.
+   de eventos de marcha, reconstrucción cinemática 3D (Madgwick+ZUPT) y
+   biomarcadores espaciotemporales/fatiga. No depende del bloque de Deep
+   Learning.
 2. **Pipeline de Deep Learning (`A04_TRANSFORMER`)** — clasificación de marcha
    mediante Transformer + FFT sobre espectrogramas híbridos generados en
-   `A01_EXTRACCION_DATOS` / `A03_PREPROCESAMIENTO`.
+   `A01_EXTRACCION_DATOS` / `A03_PREPROCESAMIENTO`, con evaluación LOPO real y
+   comparación de estrategias de fusión (Early Fusion vs. Late Fusion).
+3. **Exploración de trayectoria GPS+Transformer (`A07_TRAYECTORIA_GPS`)** —
+   investigación de una alternativa de trayectoria basada en GPS+presión con
+   fine-tuning del Transformer. **Concluida como no viable** con los datos
+   actuales (ver README propio de esa carpeta); se conserva como evidencia
+   documentada del proceso.
 
 ---
 
@@ -167,23 +174,6 @@ para ejecutar el pipeline — se regeneran automáticamente al correr
 `Orquestador_biomecanico.py` sobre cualquier paciente/rango de fechas nuevo,
 sobrescribiendo los existentes para ese mismo `CodeID`.
 
-Si se prefiere clonar el repositorio sin descargar estos archivos al disco
-(por ejemplo, para no traer datos de pacientes de ejemplo), puede usarse un
-sparse checkout:
-
-```bash
-git clone --filter=blob:none --no-checkout https://github.com/MultipleSclerosisMonitoring/2026_DLxGait-EDSS.git
-cd 2026_DLxGait-EDSS
-git sparse-checkout init --cone
-git sparse-checkout set --skip-checks '/*' '!A06_ANALISIS_CINEMATICO/RESULTADOS_BIOMECANICO'
-git checkout
-```
-
-Esto trae el historial completo del repositorio (los archivos siguen
-disponibles para consulta en GitHub y recuperables localmente con
-`git sparse-checkout disable` en cualquier momento), pero no materializa en
-disco el contenido de `RESULTADOS_BIOMECANICO/` durante el checkout.
-
 ## Estructura de archivos
 
 ```
@@ -203,23 +193,12 @@ A06_ANALISIS_CINEMATICO/
 
 ---
 
-# Bloque 2 — Pipeline de Datos y Deep Learning
+# Bloque 2 — Pipeline de Datos y Deep Learning (`A04_TRANSFORMER`)
 
-## Extracción y preprocesamiento
-
-```bash
-# 1. Extraccion de datos (genera tensores .parquet)
-python A01_EXTRACCION_DATOS/extract_data_plus.py \
-    --backend influxdbms \
-    -c A01_EXTRACCION_DATOS/config.yaml \
-    -e A01_EXTRACCION_DATOS/solicitud.xlsx
-
-# 2. Limpieza y empaquetado (genera dataset_jerarquico.hdf5)
-python A03_PREPROCESAMIENTO/LIMPIEZA.py \
-    --input resultados \
-    --output DATASET_LISTO \
-    --excel A01_EXTRACCION_DATOS/solicitud.xlsx
-```
+Clasificación binaria de marcha/reposo mediante tres arquitecturas
+comparables — Transformer temporal, FFT frecuencial, e Híbrido — evaluadas
+con test independiente y, de forma más rigurosa, con validación
+Leave-One-Patient-Out (LOPO) real (reentrenamiento completo por fold).
 
 ## Opción A — Entrenar modelos desde cero
 
@@ -230,61 +209,46 @@ python A04_TRANSFORMER/AA_TRANSFORMER_V1.py \
 ```
 
 > **Requisitos de hardware:** el entrenamiento usa GPU (CUDA) de forma
-> automática si está disponible (`torch.cuda.is_available()`), incluyendo
-> mixed precision (AMP) para acelerar. Si no hay GPU, el código cae
-> automáticamente a CPU sin necesidad de modificar nada — pero el
+> automática si está disponible (`torch.cuda.is_available()`). Si no hay GPU,
+> el código cae automáticamente a CPU sin necesidad de modificar nada, pero el
 > entrenamiento de los tres modelos (Temporal, FFT, Híbrido) será
-> considerablemente más lento. No se ha determinado un requisito mínimo de
-> VRAM ni un tiempo de entrenamiento de referencia; quedan pendientes de
-> medición empírica.
+> considerablemente más lento.
 
 Entrena automáticamente: Transformer Temporal, Clasificador FFT, Modelo
-Híbrido Tiempo + Frecuencia; guarda el escalador (`scaler_gait.joblib`),
-exporta pesos (`.pth`) y genera métricas/gráficas de validación.
+Híbrido Early Fusion (Tiempo + Frecuencia); guarda el escalador
+(`scaler_gait.joblib`), exporta pesos (`.pth`) y genera métricas/gráficas de
+validación.
 
-> **Nota sobre el umbral de clasificación:** `Agnostic_evaluator.py` carga
-> al menos un umbral óptimo desde disco en tiempo de inferencia (se ha
-> observado que intenta leer `optimal_threshold_fft.joblib`). Confirmar qué
-> archivos de umbral exactos genera `AA_TRANSFORMER_V1.py` por modelo
-> (Transformer, FFT, Híbrido) y asegurarse de que estén presentes en
-> `A05_MODELOS_ENTRENADOS/` antes de ejecutar el evaluador agnóstico; su
-> ausencia provoca un fallo en tiempo de ejecución.
+> **Nota sobre el umbral de clasificación:** el proyecto usa un umbral de
+> decisión **fijo de 0.5** (no un umbral óptimo tipo Youden's J), por decisión
+> de diseño. El umbral está **hardcodeado en el propio código**
+> (`self.threshold = 0.5` en `Agnostic_evaluator.py`), no se carga desde
+> ningún archivo `.joblib` — esto evita que un archivo de umbral corrupto o
+> sobrescrito accidentalmente altere la clasificación sin que se note.
 
 Archivos necesarios en `A05_MODELOS_ENTRENADOS/` para el evaluador agnóstico
-(confirmado contra una ejecución real):
+y la evaluación LOPO:
 ```
 modelo_transformer.pth
 modelo_fft.pth
 modelo_hibrido.pth
+meta_clasificador_late_fusion.joblib   (meta-clasificador de Late Fusion; ver más abajo)
 scaler_gait.joblib
 transformer_config.joblib
-optimal_threshold_fft.joblib      (fijo en 0.5; no lo genera AA_TRANSFORMER_V1.py)
 train_idx.npy
 val_idx.npy
 test_idx.npy
-ANALISIS_MODELOS/
-LOPO/
+y_test.npy
+prob_fft.npy
+prob_transformer.npy
 ```
 
-> **Nota sobre el umbral de clasificación:** el proyecto usa un umbral de
-> decisión fijo de **0.5** (no un umbral óptimo tipo Youden's J calculado
-> por validación), por decisión de diseño documentada. Aun así,
-> `Agnostic_evaluator.py` requiere que exista físicamente el archivo
-> `optimal_threshold_fft.joblib` en `A05_MODELOS_ENTRENADOS/` (lo carga con
-> `joblib.load(...)` sin comprobar su existencia antes). Si ese archivo no
-> está presente, generarlo antes de ejecutar el evaluador:
-> ```bash
-> python -c "import joblib; joblib.dump(0.5, 'A05_MODELOS_ENTRENADOS/optimal_threshold_fft.joblib')"
-> ```
+## Opción B — Inferencia con modelos preentrenados (evaluador agnóstico unificado)
 
-> Las subcarpetas `ANALISIS_MODELOS/` y `LOPO/` corresponden a la evaluación
-> y a la prueba de estrés LOPO (`run_lopo_stress_test`), generadas por
-> `EVALUACION_MODELOS.py`, no por `AA_TRANSFORMER_V1.py` directamente.
-
-## Opción B — Inferencia con modelos preentrenados
-
-Con los modelos y escaladores ya en `A05_MODELOS_ENTRENADOS`, se puede saltar
-el entrenamiento y ejecutar el evaluador agnóstico directamente:
+Con los modelos ya en `A05_MODELOS_ENTRENADOS`, se puede saltar el
+entrenamiento y ejecutar el evaluador agnóstico directamente. **El evaluador
+es único y unificado**: permite elegir, en tiempo de ejecución, cuál de los 4
+modos de clasificación usar, sin mantener scripts separados por modelo.
 
 ```bash
 python A04_TRANSFORMER/Agnostic_evaluator.py \
@@ -295,16 +259,54 @@ python A04_TRANSFORMER/Agnostic_evaluator.py \
     --end "yyyy-mm-ddThh:mm:ssZ"
 ```
 
+Si se omite `--modelo`, el script pregunta interactivamente por consola:
+
+```
+Seleccione el modelo a usar:
+  1. FFT
+  2. Transformer
+  3. Hibrido Early Fusion
+  4. Hibrido Late Fusion (Media Geometrica)
+Opcion (1-4):
+```
+
+También puede pasarse directamente para evitar la pregunta interactiva:
+
+```bash
+python A04_TRANSFORMER/Agnostic_evaluator.py \
+    -c A01_EXTRACCION_DATOS/config.yaml \
+    -m A05_MODELOS_ENTRENADOS \
+    -r CODIGO_PACIENTE \
+    --start "yyyy-mm-ddThh:mm:ssZ" \
+    --end "yyyy-mm-ddThh:mm:ssZ" \
+    --modelo 4
+```
+
+| Opción | Modelo | Requiere |
+|---|---|---|
+| `1` / `fft` | FFTModel solo | `modelo_fft.pth` |
+| `2` / `transformer` | GaitTransformer solo | `modelo_transformer.pth` |
+| `3` / `hibrido_early` | GaitHybridModel (Early Fusion) | `modelo_hibrido.pth` |
+| `4` / `hibrido_late` | Late Fusion (Media Geométrica) | `modelo_transformer.pth` + `modelo_fft.pth` (sin `.joblib` adicional; la combinación es una fórmula, no un modelo entrenado) |
+
+El script carga únicamente los artefactos que requiere el modo elegido (no
+carga los 3 `.pth` siempre).
+
+> **Nota importante — uso interactivo únicamente:** el modo por defecto
+> (sin `--modelo`) usa `input()` para preguntar el modelo por teclado. Esto
+> es intencional para uso manual desde consola; **no usar sin `--modelo` en
+> contextos automatizados/programados**, ya que se quedaría esperando una
+> respuesta que nunca llega.
+
 ### Formatos de fecha admitidos
 
 El evaluador detecta automáticamente el formato de `--start`/`--end`:
 
-- **ISO 8601** (recomendado): `2025-12-24T10:53:30Z`
-- **Tradicional**: `2025-12-24 10:53:30`
+- **ISO 8601 / UTC** (recomendado): `2025-12-24T10:53:30Z`
+- **Tradicional / hora local** (según `tzval` del config): `2025-12-24 10:53:30`
 
 Si recibe errores de formato, verifique que no haya espacios extra y que las
-fechas ISO incluyan `T` y `Z` (ej. `2025-12-24T10:53:30Z`). El sistema intenta
-parseo ISO 8601 primero, con fallback automático al formato tradicional.
+fechas ISO incluyan `T` y `Z`.
 
 ### Parámetros del evaluador
 
@@ -312,24 +314,82 @@ parseo ISO 8601 primero, con fallback automático al formato tradicional.
 |---|---|
 | `-c` | Ruta al archivo `config.yaml` |
 | `-m` | Directorio de modelos entrenados |
-| `-r` | Identificador del sujeto de estudio (solo el código, sin ruta a Excel) |
+| `-r` | Identificador del sujeto de estudio |
 | `--start` | Inicio del intervalo temporal |
 | `--end` | Fin del intervalo temporal |
-| `-o` | Archivo CSV de salida |
+| `--modelo` | `1`/`fft`, `2`/`transformer`, `3`/`hibrido_early`, `4`/`hibrido_late`. Si se omite, se pregunta interactivamente |
+| `-o` | Carpeta de salida (CSV + gráfica); por defecto `A04_TRANSFORMER/RESULTADO_AGNOSTIC/` |
 
-Ejemplo de salida:
+Ejemplo de salida (columnas genéricas, no dependen del modelo elegido):
 ```csv
-timestamp,prob_hybrid,pred_hybrid,prob_smoothed,pred_final_smoothed
+timestamp,prob,pred,prob_smoothed,pred_final_smoothed
 2025-12-24 10:53:35.866,0.9999752044677734,1,0.9999757289886475,1
 ```
 
-## Ejecución como módulo
+Los archivos de salida incluyen el nombre del modelo usado
+(`agnostico_{paciente}_{modelo}.csv`,
+`{paciente}_{modelo}_agnostico_timeline.png`), evitando que corridas con
+distintos modelos se sobrescriban entre sí.
+
+## Comparación de modelos — LOPO real (Leave-One-Patient-Out)
+
+A diferencia del test independiente (que en este proyecto satura en
+AUC=1.0000 para los tres modelos base, señal de que no discrimina bien entre
+alternativas), la validación LOPO real —reentrenando desde cero en cada
+fold, dejando un paciente distinto fuera— sí diferencia el desempeño:
+
+| Método | AUC LOPO |
+|---|---|
+| **FFT (solo)** | **0.9061** |
+| Media Geométrica (Late Fusion) | 0.9002 |
+| Meta-Clasificador (Late Fusion) | 0.8918 |
+| Híbrido (Early Fusion) | 0.8771 |
+| Voto Mayoritario (Late Fusion) | 0.8651 |
+
+**Conclusión:** ninguna variante de Late Fusion supera al FFT solo, aunque
+Media Geométrica y Meta-Clasificador sí superan al Híbrido (Early Fusion).
+Es decir, Late Fusion mejora sobre Early Fusion, pero el mejor modelo
+individual (FFT) sigue ganando a cualquier combinación probada. Por eso el
+evaluador agnóstico (`Agnostic_evaluator.py`, opción `4`) usa **Media
+Geométrica** como variante de Late Fusion (la mejor de las tres), no Voto
+Mayoritario ni Meta-Clasificador.
+
+Ejecutar la evaluación LOPO completa (Híbrido + FFT + las 3 variantes de
+Late Fusion):
 
 ```bash
-python -m A04_TRANSFORMER.Agnostic_evaluator
-# equivalente a:
-python A04_TRANSFORMER/Agnostic_evaluator.py
+python A04_TRANSFORMER/EVALUACION_MODELOS.py \
+    --dataset "DATASET_LISTO/dataset_jerarquico.hdf5" \
+    --models "A05_MODELOS_ENTRENADOS" \
+    --run-lopo
 ```
+
+> **Advertencia de tiempo:** esta corrida reentrena múltiples redes por cada
+> paciente dejado fuera (Híbrido, FFT, y Transformer+FFT por separado para
+> Late Fusion), por lo que es considerablemente más lenta que un
+> entrenamiento único.
+
+### Calcular solo Late Fusion (sin recalcular Híbrido/FFT test independiente)
+
+Si los modelos ya están entrenados y solo se quiere obtener las 3 variantes
+de Late Fusion sobre el test independiente (sin reentrenar nada, solo
+inferencia):
+
+```bash
+python A04_TRANSFORMER/late_fusion.py --models-dir A05_MODELOS_ENTRENADOS
+```
+
+Reconstruye `x_test`/`y_test` desde el HDF5 + `test_idx.npy`, corre
+inferencia con los modelos ya entrenados, calcula Media Geométrica, Voto
+Mayoritario y Meta-Clasificador, y guarda el meta-clasificador final
+entrenado (`meta_clasificador_late_fusion.joblib`) en
+`A05_MODELOS_ENTRENADOS/LATE_FUSION/`.
+
+> **Nota metodológica:** el meta-clasificador final guardado se entrena
+> sobre el mismo test set usado para reportar sus métricas (único conjunto
+> etiquetado disponible fuera de train/val). Las métricas de
+> "Meta-Clasificador" en el reporte LOPO sí son honestas (out-of-fold), pero
+> el `.joblib` de producción no tiene la misma garantía de generalización.
 
 ## Estructura de archivos
 
@@ -339,14 +399,16 @@ A04_TRANSFORMER/
 ├── AA_TRANSFORMER_V1.py
 ├── Agnostic_evaluator.py
 ├── EVALUACION_MODELOS.py
+├── late_fusion.py
 └── test_pipeline.py
 ```
 
 | Script | Función |
 |---|---|
-| `AA_TRANSFORMER_V1.py` | Entrenamiento de los tres modelos (Temporal, FFT, Híbrido) a partir del dataset HDF5; guarda pesos, escalador y config |
-| `Agnostic_evaluator.py` | Inferencia continua sobre un paciente/rango temporal usando los modelos ya entrenados |
-| `EVALUACION_MODELOS.py` | Evaluación y validación de los modelos entrenados, incluyendo la prueba de estrés LOPO (`run_lopo_stress_test`) y generación de métricas/gráficas de validación |
+| `AA_TRANSFORMER_V1.py` | Entrenamiento de los tres modelos (Temporal, FFT, Híbrido Early Fusion) a partir del dataset HDF5; guarda pesos, escalador y config |
+| `Agnostic_evaluator.py` | Evaluador agnóstico **unificado**: inferencia continua sobre un paciente/rango temporal, con selección de modelo (FFT / Transformer / Híbrido Early / Híbrido Late) |
+| `EVALUACION_MODELOS.py` | Evaluación de test independiente + LOPO real (`run_lopo_evaluation`, `run_lopo_evaluation_fft`, `run_lopo_late_fusion`) para los 3 modelos base y las 3 variantes de Late Fusion |
+| `late_fusion.py` | Calcula las 3 variantes de Late Fusion (Media Geométrica, Voto Mayoritario, Meta-Clasificador) sobre el test independiente, sin reentrenar; guarda el meta-clasificador de producción |
 | `test_pipeline.py` | Tests unitarios del pipeline de Deep Learning |
 
 ## Arquitectura del modelo
@@ -358,12 +420,53 @@ A04_TRANSFORMER/
   RFFT (Real Fast Fourier Transform) para aislar micro-frecuencias
   biomecánicas generadas por impactos instantáneos de la marcha (basado en
   Müller et al., 2021).
-- **Modelo Híbrido (Early Fusion)**: concatena los espacios latentes de ambas
-  ramas antes del cabezal de clasificación final, mejorando robustez,
-  generalización y reducción de ruido biomecánico.
+- **Modelo Híbrido — Early Fusion**: concatena los espacios latentes de ambas
+  ramas antes del cabezal de clasificación final.
+- **Late Fusion**: entrena Transformer y FFT de forma completamente
+  independiente, y combina sus probabilidades finales (no sus features
+  intermedias) mediante media geométrica, voto mayoritario, o un
+  meta-clasificador (regresión logística). Ver comparación LOPO arriba.
 
-Validación inter-sujeto mediante `StratifiedGroupKFold`, garantizando
-separación estricta por paciente y evaluación clínica realista.
+Validación LOPO mediante `LeaveOneGroupOut`, garantizando separación
+estricta por paciente y evaluación clínica realista.
+
+---
+
+# Bloque 3 — Exploración de trayectoria GPS+Transformer (`A07_TRAYECTORIA_GPS`)
+
+Investigación de una propuesta del director del TFM: usar los sensores de
+presión y GPS, junto con la misma arquitectura Transformer de A04 (mediante
+fine-tuning), para calcular trayectoria (posición X,Y) del cuerpo, como
+alternativa al motor Madgwick+ZUPT de A06.
+
+> **Conclusión: no viable con los datos actuales.** El GPS de los calcetines
+> es la única fuente de posición disponible (confirmado con un inventario
+> exhaustivo de todos los campos/tags de InfluxDB — no existe UWB, RTK, ni
+> ningún otro sensor de posicionamiento), con lecturas reales espaciadas
+> entre 7 y 80 segundos entre sí. El error final de trayectoria se mantuvo
+> en el orden de 20-60 metros según la variante probada, muy lejos de ser
+> utilizable. **Se mantiene A06 (Madgwick+ZUPT) como única fuente de
+> trayectoria/velocidad/zancada/MTC del proyecto.** Este bloque se conserva
+> como evidencia documentada del proceso de investigación, no como pipeline
+> de producción. Ver `A07_TRAYECTORIA_GPS/README_A07.md` para el detalle
+> completo de la metodología, decisiones y resultados.
+
+## Estructura de archivos
+
+```
+A07_TRAYECTORIA_GPS/
+├── __init__.py
+├── README_A07.md
+├── preparar_dataset_trayectoria.py
+├── conector_trayectoria.py
+├── trajectory_model.py
+├── entrenar_trajectory_model.py
+├── entrenar_trajectory_model_multi.py
+├── analizar_segmento_trayectoria.py
+├── verificar_gps_por_pie.py
+├── inventario_influxdb.py
+└── RESULTADOS_TRAYECTORIA/
+```
 
 ---
 
@@ -381,6 +484,7 @@ separación estricta por paciente y evaluación clínica realista.
 | Deep Learning | PyTorch, NumPy, SciPy |
 | Ingeniería | Pydantic, Pytest, Logging, Type Hinting, Pandas, Matplotlib, Openpyxl, Pyarrow |
 | Biomecánica | IMUs, FFT, Sensor Fusion, ZUPT, AHRS, Scikit-learn |
+| Geoespacial | pyproj (proyección UTM), scipy.interpolate (PCHIP) — solo en A07 |
 
 El proyecto sigue PEP8, tipado estricto, programación orientada a objetos,
 modularidad y testing unitario.
@@ -392,11 +496,13 @@ modularidad y testing unitario.
 **Completado**
 - [x] Pipeline de extracción de datos
 - [x] Pipeline de reconstrucción biomecánica y clasificación de marcha
-- [x] Arquitectura Tiempo, Frecuencia e Híbrida
+- [x] Arquitectura Tiempo, Frecuencia e Híbrida (Early Fusion)
 - [x] Reconstrucción cinemática 3D (IMU + presión plantar)
 - [x] Corrección de deriva inercial (ZUPT 3D, compensación gravitacional, orientación global)
 - [x] Extracción de métricas biomecánicas espaciales y temporales
-- [x] Evaluación agnóstica continua
+- [x] Evaluación agnóstica continua (unificada, 4 modos de modelo)
+- [x] Validación LOPO real (Híbrido, FFT, y 3 variantes de Late Fusion)
+- [x] Exploración de trayectoria GPS+Transformer (concluida, no viable)
 - [x] Tests unitarios (pytest)
 - [x] Compatibilidad multiplataforma mediante empaquetado editable
 - [x] Refactorización completa PEP8
@@ -406,6 +512,7 @@ modularidad y testing unitario.
 - [ ] Integración TabTransformer
 - [ ] MLP-Mixer clínico
 - [ ] Fusión con variables cognitivas
+- [ ] Aumento del volumen de muestras de entrenamiento
 
 ---
 
