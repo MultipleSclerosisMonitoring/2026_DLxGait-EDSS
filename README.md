@@ -512,7 +512,6 @@ modularidad y testing unitario.
 - [ ] Integración TabTransformer
 - [ ] MLP-Mixer clínico
 - [ ] Fusión con variables cognitivas
-- [ ] Aumento del volumen de muestras de entrenamiento
 
 ---
 
