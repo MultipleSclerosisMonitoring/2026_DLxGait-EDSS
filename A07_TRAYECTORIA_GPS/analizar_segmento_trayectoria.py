@@ -41,6 +41,7 @@ if str(PROJECT_ROOT) not in sys.path:
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(PROJECT_ROOT / "A01_EXTRACCION_DATOS"))
 sys.path.insert(0, str(PROJECT_ROOT / "A04_TRANSFORMER"))
+sys.path.insert(0, str(PROJECT_ROOT / "A06_ANALISIS_CINEMATICO"))
 
 from extract_data_plus import ExtractionParams
 from AA_TRANSFORMER_V1 import TransformerConfig
