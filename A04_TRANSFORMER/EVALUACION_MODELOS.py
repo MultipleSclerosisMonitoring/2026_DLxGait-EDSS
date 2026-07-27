@@ -503,6 +503,7 @@ def main() -> None:
         train_cfg = TrainConfig(device=DEVICE)
         run_lopo_evaluation(x_all, y_all, groups_all, m1_cfg, train_cfg, EVAL_DIR)
         run_lopo_evaluation_fft(x_all, y_all, groups_all, train_cfg, EVAL_DIR)
+        run_lopo_late_fusion(x_all, y_all, groups_all, m1_cfg, train_cfg, EVAL_DIR)
     else:
         logger.info("EVALUACION LOPO OMITIDA: Use --run-lopo para lanzar validacion cruzada paciente a paciente.")
 
@@ -830,11 +831,190 @@ def run_lopo_evaluation_fft(
     )
 
 
+def run_lopo_late_fusion(
+    x_all: np.ndarray,
+    y_all: np.ndarray,
+    groups_all: np.ndarray,
+    t_cfg: TransformerConfig,
+    train_cfg: TrainConfig,
+    eval_dir: Path
+) -> None:
+    """
+    LOPO real para Late Fusion: en cada fold, reentrena Transformer y FFT
+    POR SEPARADO desde cero (dejando un paciente distinto fuera de train/val
+    en cada iteracion), obtiene las probabilidades de cada uno sobre el
+    paciente reservado, y las combina con 3 criterios de Late Fusion
+    (media geometrica, voto mayoritario, meta-clasificador entrenado
+    dentro del propio fold de validacion, nunca visto en el paciente de test).
+
+    A diferencia de run_lopo_evaluation (Hibrido, Early Fusion), aqui NO se
+    entrena ninguna red conjunta: cada modelo aprende de forma completamente
+    independiente y solo se combinan sus predicciones finales.
+
+    :param x_all: Tensores crudos de todos los pacientes, forma (N, steps, features).
+    :param y_all: Etiquetas binarias (reposo/marcha) por muestra.
+    :param groups_all: Identificador de paciente por muestra.
+    :param t_cfg: Configuracion estructural del Transformer.
+    :param train_cfg: Hiperparametros de entrenamiento.
+    :param eval_dir: Directorio de salida para CSVs y matriz de confusion.
+    """
+    logo = LeaveOneGroupOut()
+    fft_proc = FFTProcessor()
+    unique_p = np.unique(groups_all)
+
+    resultados_por_variante: Dict[str, Dict[str, List]] = {
+        "media_geometrica": {"y_true": [], "y_prob": [], "fold_scores": [], "patient_ids": []},
+        "voto_mayoritario": {"y_true": [], "y_prob": [], "fold_scores": [], "patient_ids": []},
+        "meta_clasificador": {"y_true": [], "y_prob": [], "fold_scores": [], "patient_ids": []},
+    }
+
+    logger.info(
+        f"INICIANDO LOPO REAL LATE FUSION (REENTRENAMIENTO POR FOLD) — {len(unique_p)} PACIENTES"
+    )
+
+    for fold, (trainval_idx, test_idx) in enumerate(
+        logo.split(x_all, y_all, groups_all), 1
+    ):
+        test_patient = groups_all[test_idx][0]
+
+        trainval_patients = np.unique(groups_all[trainval_idx])
+        val_patient = trainval_patients[-1]
+
+        val_mask = groups_all[trainval_idx] == val_patient
+        train_idx_f = trainval_idx[~val_mask]
+        val_idx_f = trainval_idx[val_mask]
+
+        x_tr, y_tr = x_all[train_idx_f], y_all[train_idx_f]
+        x_val, y_val = x_all[val_idx_f], y_all[val_idx_f]
+        x_ts, y_ts = x_all[test_idx], y_all[test_idx]
+
+        if len(np.unique(y_tr)) < 2 or len(np.unique(y_ts)) < 2:
+            logger.warning(f"FOLD {fold} ({test_patient}) OMITIDO — CLASE UNICA")
+            continue
+
+        # ESCALADO (fit unicamente con entrenamiento)
+        sc = StandardScaler()
+        x_tr_s = sc.fit_transform(x_tr.reshape(-1, x_tr.shape[2])).reshape(x_tr.shape).astype(np.float32)
+        x_val_s = sc.transform(x_val.reshape(-1, x_val.shape[2])).reshape(x_val.shape).astype(np.float32)
+        x_ts_s = sc.transform(x_ts.reshape(-1, x_ts.shape[2])).reshape(x_ts.shape).astype(np.float32)
+
+        # FFT
+        x_tr_fft = fft_proc.get_fft_features(x_tr_s).reshape(x_tr_s.shape[0], -1)
+        x_val_fft = fft_proc.get_fft_features(x_val_s).reshape(x_val_s.shape[0], -1)
+        x_ts_fft = fft_proc.get_fft_features(x_ts_s).reshape(x_ts_s.shape[0], -1)
+        fft_dim = x_tr_fft.shape[1]
+
+        # ---------------------------------------------------------------
+        # ENTRENAR TRANSFORMER (independiente)
+        # ---------------------------------------------------------------
+        sampler_t = make_weighted_sampler(y_tr)
+        tr_l_t = DataLoader(StandardDataset(x_tr_s, y_tr), batch_size=train_cfg.batch_size, sampler=sampler_t, drop_last=True)
+        val_l_t = DataLoader(StandardDataset(x_val_s, y_val), batch_size=train_cfg.batch_size)
+        ts_l_t = DataLoader(StandardDataset(x_ts_s, y_ts), batch_size=train_cfg.batch_size)
+
+        model_transformer_fold = GaitTransformer(t_cfg).to(train_cfg.device)
+        trainer_t = GaitTrainerFFT(model_transformer_fold, train_cfg)  # bucle de 2 elementos (x, y)
+        model_transformer_fold = trainer_t.train(tr_l_t, val_l_t)
+
+        # ---------------------------------------------------------------
+        # ENTRENAR FFT (independiente)
+        # ---------------------------------------------------------------
+        sampler_f = make_weighted_sampler(y_tr)
+        tr_l_f = DataLoader(StandardDataset(x_tr_fft, y_tr), batch_size=train_cfg.batch_size, sampler=sampler_f, drop_last=True)
+        val_l_f = DataLoader(StandardDataset(x_val_fft, y_val), batch_size=train_cfg.batch_size)
+        ts_l_f = DataLoader(StandardDataset(x_ts_fft, y_ts), batch_size=train_cfg.batch_size)
+
+        model_fft_fold = FFTModel(fft_dim).to(train_cfg.device)
+        trainer_f = GaitTrainerFFT(model_fft_fold, train_cfg)
+        model_fft_fold = trainer_f.train(tr_l_f, val_l_f)
+
+        # ---------------------------------------------------------------
+        # OBTENER PROBABILIDADES DE VAL (para entrenar meta-clasificador
+        # SIN usar el paciente de test) Y DE TEST (paciente reservado)
+        # ---------------------------------------------------------------
+        def probs_de(model, loader_):
+            model.eval()
+            probs = []
+            with torch.no_grad():
+                for xb, yb in loader_:
+                    out = model(xb.to(train_cfg.device))
+                    probs.extend(torch.softmax(out, dim=1)[:, 1].cpu().numpy())
+            return np.array(probs)
+
+        prob_val_t = probs_de(model_transformer_fold, val_l_t)
+        prob_val_f = probs_de(model_fft_fold, val_l_f)
+        prob_ts_t = probs_de(model_transformer_fold, ts_l_t)
+        prob_ts_f = probs_de(model_fft_fold, ts_l_f)
+
+        # ---------------------------------------------------------------
+        # COMBINAR: MEDIA GEOMETRICA
+        # ---------------------------------------------------------------
+        eps = 1e-7
+        prob_geom = np.sqrt(np.clip(prob_ts_t, eps, 1 - eps) * np.clip(prob_ts_f, eps, 1 - eps))
+
+        # ---------------------------------------------------------------
+        # COMBINAR: VOTO MAYORITARIO
+        # ---------------------------------------------------------------
+        pred_t = (prob_ts_t >= 0.5).astype(int)
+        pred_f = (prob_ts_f >= 0.5).astype(int)
+        suma_votos = pred_t + pred_f
+        prob_voto = np.where(suma_votos == 2, 1.0, np.where(suma_votos == 0, 0.0, (prob_ts_t + prob_ts_f) / 2.0))
+
+        # ---------------------------------------------------------------
+        # COMBINAR: META-CLASIFICADOR (entrenado SOLO con el fold de val,
+        # nunca con el paciente de test reservado)
+        # ---------------------------------------------------------------
+        meta_clf_fold = LogisticRegression()
+        X_val_meta = np.column_stack([prob_val_t, prob_val_f])
+        meta_clf_fold.fit(X_val_meta, y_val)
+        X_ts_meta = np.column_stack([prob_ts_t, prob_ts_f])
+        prob_meta = meta_clf_fold.predict_proba(X_ts_meta)[:, 1]
+
+        # ---------------------------------------------------------------
+        # REGISTRAR RESULTADOS DE CADA VARIANTE
+        # ---------------------------------------------------------------
+        for nombre, prob_fold in [
+            ("media_geometrica", prob_geom),
+            ("voto_mayoritario", prob_voto),
+            ("meta_clasificador", prob_meta),
+        ]:
+            auc_fold = roc_auc_score(y_ts, prob_fold) if len(set(y_ts)) > 1 else 0.0
+            resultados_por_variante[nombre]["y_true"].extend(y_ts.tolist())
+            resultados_por_variante[nombre]["y_prob"].extend(prob_fold.tolist())
+            resultados_por_variante[nombre]["fold_scores"].append(auc_fold)
+            resultados_por_variante[nombre]["patient_ids"].append(str(test_patient))
+
+        logger.info(
+            f"FOLD {fold:02d} | PACIENTE={test_patient} | "
+            f"AUC_geom={roc_auc_score(y_ts, prob_geom):.4f} | "
+            f"AUC_voto={roc_auc_score(y_ts, prob_voto):.4f} | "
+            f"AUC_meta={roc_auc_score(y_ts, prob_meta):.4f} | N_TEST={len(y_ts)}"
+        )
+
+        del model_transformer_fold, model_fft_fold, trainer_t, trainer_f
+        del tr_l_t, val_l_t, ts_l_t, tr_l_f, val_l_f, ts_l_f
+        torch.cuda.empty_cache()
+        gc.collect()
+
+    # CONSOLIDAR CADA VARIANTE POR SEPARADO
+    for nombre, datos in resultados_por_variante.items():
+        _finalizar_lopo(
+            all_y_true=datos["y_true"],
+            all_y_prob=datos["y_prob"],
+            fold_scores=datos["fold_scores"],
+            patient_ids=datos["patient_ids"],
+            eval_dir=eval_dir,
+            prefijo=f"latefusion_{nombre}",
+            titulo_grafica=f"LOPO REAL LATE FUSION ({nombre}) — Reentrenado por Fold"
+        )
+
+
 class GaitTrainerFFT:
     """
-    Bucle de entrenamiento con early stopping para el modelo FFT puro
-    (2 elementos por batch: x, y), analogo a GaitTrainer pero sin la
-    rama temporal del hibrido.
+    Bucle de entrenamiento con early stopping para modelos de una sola
+    entrada (2 elementos por batch: x, y). Se usa tanto para FFTModel
+    como para GaitTransformer cuando se entrena de forma independiente
+    (Late Fusion), analogo a GaitTrainer pero sin la rama del hibrido.
     """
     def __init__(self, model: nn.Module, config: TrainConfig) -> None:
         self.model = model.to(config.device)
@@ -895,15 +1075,17 @@ def _finalizar_lopo(
     """
     Consolida resultados de un esquema LOPO (fold-por-fold ya ejecutados)
     en CSVs de AUC por fold, metricas globales, calibracion y matriz de
-    confusion, compartido por run_lopo_evaluation y run_lopo_evaluation_fft.
+    confusion, compartido por run_lopo_evaluation, run_lopo_evaluation_fft
+    y run_lopo_late_fusion.
 
     :param all_y_true: Etiquetas reales concatenadas de todos los folds.
     :param all_y_prob: Probabilidades predichas concatenadas de todos los folds.
     :param fold_scores: AUC individual de cada fold (paciente dejado fuera).
     :param patient_ids: Identificador de paciente correspondiente a cada fold.
     :param eval_dir: Directorio de salida.
-    :param prefijo: Prefijo de archivo ("hibrido" o "fft") para no sobreescribir
-        resultados de un modelo con los de otro.
+    :param prefijo: Prefijo de archivo (ej. "hibrido", "fft",
+        "latefusion_media_geometrica") para no sobreescribir resultados
+        de un modelo/variante con los de otro.
     :param titulo_grafica: Titulo mostrado en la matriz de confusion exportada.
     """
     if not all_y_true:
