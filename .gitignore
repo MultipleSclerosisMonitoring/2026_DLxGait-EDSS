@@ -1,11 +1,11 @@
 # --- IGNORAR DATOS PESADOS ---
-*.hdf5
+# *.hdf5
 *.parquet
 *.csv
 *.zip
 
 # --- IGNORAR CARPETAS DE RESULTADOS ---
-**/DATASET_LISTO/
+# **/DATASET_LISTO/
 **/models/
 **/outputs/
 
