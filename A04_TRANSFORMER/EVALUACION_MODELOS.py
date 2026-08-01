@@ -18,7 +18,10 @@ from typing import Tuple, List, Dict, Any
 from pydantic import BaseModel, PositiveInt, confloat
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import LeaveOneGroupOut
-from sklearn.metrics import confusion_matrix, roc_auc_score, brier_score_loss, ConfusionMatrixDisplay
+from sklearn.metrics import (
+    confusion_matrix, roc_auc_score, brier_score_loss, ConfusionMatrixDisplay,
+    balanced_accuracy_score, average_precision_score, matthews_corrcoef
+)
 from sklearn.linear_model import LogisticRegression
 import torch
 import torch.nn as nn
@@ -379,6 +382,192 @@ class GaitEvaluator:
             "Threshold": threshold
         }
 
+# =============================================================================
+# COMPARATIVA GENERAL: resumen legible + graficas de los 5 esquemas LOPO
+# =============================================================================
+
+# Parametros entrenables de cada modelo, calculados una sola vez (no
+# dependen del dataset ni de la corrida). Usados como proxy de "costo
+# computacional" en la grafica de efectividad vs costo. Late Fusion no
+# entrena una red nueva propia (combina Transformer + FFT ya entrenados
+# por separado), asi que su costo se reporta como la suma de ambos.
+PARAMETROS_MODELOS = {
+    "Transformer": 586_178,
+    "FFT": 245_443,
+    "Hibrido": 649_907,
+}
+PARAMETROS_MODELOS["Late Fusion (Transformer+FFT)"] = (
+    PARAMETROS_MODELOS["Transformer"] + PARAMETROS_MODELOS["FFT"]
+)
+
+NOMBRES_LEGIBLES_ESQUEMA = {
+    "hibrido": ("Híbrido (Early Fusion)", PARAMETROS_MODELOS["Hibrido"]),
+    "fft": ("FFT (solo)", PARAMETROS_MODELOS["FFT"]),
+    "latefusion_media_geometrica": ("Late Fusion — Media Geométrica", PARAMETROS_MODELOS["Late Fusion (Transformer+FFT)"]),
+    "latefusion_voto_mayoritario": ("Late Fusion — Voto Mayoritario", PARAMETROS_MODELOS["Late Fusion (Transformer+FFT)"]),
+    "latefusion_meta_clasificador": ("Late Fusion — Meta-Clasificador", PARAMETROS_MODELOS["Late Fusion (Transformer+FFT)"]),
+}
+
+
+def generar_comparativa_general(
+    resumenes: Dict[str, Dict[str, Any]], comparativa_dir: Path
+) -> None:
+    """
+    Genera la carpeta "comparativa" dentro de LOPO/: dos archivos de
+    texto legibles (resumen_general.txt y detalles_por_modelo.txt) y dos
+    graficas (efectividad y efectividad-vs-costo) que resumen los 5
+    esquemas evaluados, sin repetir el detalle fold-por-fold que ya vive
+    en cada carpeta de modelo individual.
+
+    :param resumenes: Diccionario {prefijo: resumen_dict}, donde cada
+        resumen_dict es el diccionario devuelto por _finalizar_lopo.
+    :param comparativa_dir: Carpeta LOPO/comparativa/ (se crea si no existe).
+    """
+    graficas_dir = comparativa_dir / "graficas"
+    comparativa_dir.mkdir(parents=True, exist_ok=True)
+    graficas_dir.mkdir(parents=True, exist_ok=True)
+
+    filas = []
+    for prefijo, resumen in resumenes.items():
+        if not resumen:
+            continue
+        nombre_legible, n_params = NOMBRES_LEGIBLES_ESQUEMA.get(prefijo, (prefijo, None))
+        filas.append({
+            "prefijo": prefijo,
+            "nombre": nombre_legible,
+            "n_parametros": n_params,
+            **resumen
+        })
+
+    if not filas:
+        logger.warning("COMPARATIVA GENERAL: SIN RESULTADOS PARA CONSOLIDAR")
+        return
+
+    df = pd.DataFrame(filas).sort_values("auc_global", ascending=False).reset_index(drop=True)
+
+    # -------------------------------------------------------------------
+    # resumen_general.txt: lo mas sustancial, facil de leer de un vistazo
+    # -------------------------------------------------------------------
+    lineas = []
+    lineas.append("RESUMEN GENERAL — COMPARATIVA DE MODELOS (LOPO)")
+    lineas.append(f"Fecha: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
+    lineas.append("=" * 92)
+    lineas.append("")
+    lineas.append(f"{'Modelo':32s} {'AUC':>7s} {'PR-AUC':>7s} {'BalAcc':>7s} {'MCC':>7s} {'Params':>10s}")
+    lineas.append("-" * 92)
+    for _, row in df.iterrows():
+        params_str = f"{row['n_parametros']:,}" if row["n_parametros"] else "N/D"
+        lineas.append(
+            f"{row['nombre']:32s} {row['auc_global']:7.4f} {row['pr_auc_global']:7.4f} "
+            f"{row['balanced_accuracy_global']:7.4f} {row['mcc_global']:7.4f} {params_str:>10s}"
+        )
+    lineas.append("")
+
+    mejor = df.iloc[0]
+    lineas.append(f"Mejor AUC global: {mejor['nombre']} ({mejor['auc_global']:.4f})")
+
+    mas_barato = df.loc[df["n_parametros"].idxmin()] if df["n_parametros"].notna().any() else None
+    if mas_barato is not None:
+        lineas.append(
+            f"Modelo mas ligero: {mas_barato['nombre']} "
+            f"({mas_barato['n_parametros']:,} parametros, AUC={mas_barato['auc_global']:.4f})"
+        )
+
+    lineas.append("")
+    lineas.append("Consistencia entre pacientes (menor STD = mas parejo, menos riesgo de")
+    lineas.append("fallar sorpresivamente en un paciente nuevo):")
+    df_std = df.sort_values("auc_std_folds")
+    for _, row in df_std.iterrows():
+        lineas.append(f"  {row['nombre']:32s} STD={row['auc_std_folds']:.4f}")
+
+    lineas.append("")
+    lineas.append("Peor paciente por modelo (el mas dificil de clasificar en cada esquema):")
+    for _, row in df.iterrows():
+        if row["peor_paciente"]:
+            lineas.append(
+                f"  {row['nombre']:32s} -> {row['peor_paciente']} (AUC={row['peor_auc_fold']:.4f})"
+            )
+
+    with open(comparativa_dir / "resumen_general.txt", "w", encoding="utf-8") as f:
+        f.write("\n".join(lineas))
+    logger.info("resumen_general.txt GENERADO")
+
+    # -------------------------------------------------------------------
+    # detalles_por_modelo.txt: un poco mas de detalle por modelo, pero
+    # SIN repetir la tabla fold-por-fold completa (esa ya vive en cada
+    # carpeta LOPO/<modelo>/lopo_metricas_por_paciente.csv)
+    # -------------------------------------------------------------------
+    lineas_detalle = []
+    lineas_detalle.append("DETALLES POR MODELO — COMPARATIVA LOPO")
+    lineas_detalle.append(f"Fecha: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
+    lineas_detalle.append("=" * 92)
+
+    for _, row in df.iterrows():
+        lineas_detalle.append("")
+        lineas_detalle.append(f"{row['nombre']}")
+        lineas_detalle.append("-" * 92)
+        lineas_detalle.append(f"  AUC global (todas las predicciones concatenadas): {row['auc_global']:.4f}")
+        lineas_detalle.append(f"  AUC promedio por fold: {row['auc_promedio_folds']:.4f} (STD: {row['auc_std_folds']:.4f})")
+        lineas_detalle.append(f"  PR-AUC: {row['pr_auc_global']:.4f}  |  Balanced Accuracy: {row['balanced_accuracy_global']:.4f}  |  MCC: {row['mcc_global']:.4f}")
+        lineas_detalle.append(f"  Brier score (calibracion): {row['brier']:.4f}")
+        lineas_detalle.append(f"  Folds evaluados: {row['n_folds']}")
+        if row["peor_paciente"]:
+            lineas_detalle.append(f"  Paciente mas dificil: {row['peor_paciente']} (AUC={row['peor_auc_fold']:.4f})")
+        if row["n_parametros"]:
+            lineas_detalle.append(f"  Parametros entrenables: {row['n_parametros']:,}")
+        lineas_detalle.append(
+            f"  Detalle completo (por paciente): ver LOPO/{row['prefijo']}/lopo_metricas_por_paciente.csv"
+        )
+
+    with open(comparativa_dir / "detalles_por_modelo.txt", "w", encoding="utf-8") as f:
+        f.write("\n".join(lineas_detalle))
+    logger.info("detalles_por_modelo.txt GENERADO")
+
+    # -------------------------------------------------------------------
+    # Grafica 1: efectividad (AUC, PR-AUC, BalAcc, MCC) por modelo
+    # -------------------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(10, 6))
+    metricas_plot = ["auc_global", "pr_auc_global", "balanced_accuracy_global", "mcc_global"]
+    etiquetas_metricas = ["AUC", "PR-AUC", "Balanced Acc.", "MCC"]
+    x = np.arange(len(df))
+    ancho = 0.2
+
+    for i, (metrica, etiqueta) in enumerate(zip(metricas_plot, etiquetas_metricas)):
+        ax.bar(x + i * ancho, df[metrica], ancho, label=etiqueta)
+
+    ax.set_xticks(x + ancho * 1.5)
+    ax.set_xticklabels(df["nombre"], rotation=25, ha="right")
+    ax.set_ylabel("Valor de la métrica")
+    ax.set_title("Comparativa de efectividad — LOPO (todos los esquemas)")
+    ax.legend()
+    ax.grid(axis="y", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(graficas_dir / "comparativa_efectividad.png", dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+    # -------------------------------------------------------------------
+    # Grafica 2: efectividad (AUC) vs costo (parametros entrenables)
+    # -------------------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(8, 6))
+    df_con_params = df.dropna(subset=["n_parametros"])
+    ax.scatter(df_con_params["n_parametros"], df_con_params["auc_global"], s=120, alpha=0.8)
+    for _, row in df_con_params.iterrows():
+        ax.annotate(
+            row["nombre"], (row["n_parametros"], row["auc_global"]),
+            textcoords="offset points", xytext=(6, 6), fontsize=8
+        )
+    ax.set_xlabel("Parámetros entrenables (costo computacional)")
+    ax.set_ylabel("AUC global (LOPO)")
+    ax.set_title("Efectividad vs. costo computacional")
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(graficas_dir / "comparativa_efectividad_vs_costo.png", dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+    logger.info("GRAFICAS COMPARATIVAS GENERADAS (efectividad, efectividad_vs_costo)")
+
+
+
 # CONTEXTO DE EJECUCION GENERAL
 def main() -> None:
     set_seed(13)
@@ -389,24 +578,42 @@ def main() -> None:
     args = parser.parse_args()
 
     MODELS_DIR = args.models
-    # Carpeta principal
-    EVAL_GENERAL_DIR = MODELS_DIR / "EVAL_GENERAL"
-    EVAL_GENERAL_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Todas las figuras normales
-    GRAFICAS_DIR = EVAL_GENERAL_DIR / "graficas"
-    GRAFICAS_DIR.mkdir(parents=True, exist_ok=True)
+    # -------------------------------------------------------------------
+    # NUEVA ESTRUCTURA DE CARPETAS
+    #
+    # A05_MODELOS_ENTRENADOS/
+    # ├── evaluacion_superficial/   (test independiente, 1 solo paciente,
+    # │   ├── graficas/              metrica secundaria/no representativa
+    # │   ├── metricas_basicas.txt   -- se guardan aqui las graficas y
+    # │   ├── calibracion_eval.csv   metricas que antes vivian sueltas
+    # │   └── reporte_final_evaluacion.txt en EVAL_GENERAL/)
+    # └── LOPO/                     (metrica principal de referencia)
+    #     ├── hibrido/{graficas/, *.csv}
+    #     ├── fft/{graficas/, *.csv}
+    #     ├── latefusion_media_geometrica/{graficas/, *.csv}
+    #     ├── latefusion_voto_mayoritario/{graficas/, *.csv}
+    #     ├── latefusion_meta_clasificador/{graficas/, *.csv}
+    #     └── comparativa/
+    #         ├── resumen_general.txt
+    #         ├── detalles_por_modelo.txt
+    #         └── graficas/
+    # -------------------------------------------------------------------
+    SUPERFICIAL_DIR = MODELS_DIR / "evaluacion_superficial"
+    SUPERFICIAL_GRAFICAS_DIR = SUPERFICIAL_DIR / "graficas"
+    SUPERFICIAL_DIR.mkdir(parents=True, exist_ok=True)
+    SUPERFICIAL_GRAFICAS_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Resultados del test independiente
-    EVAL_DIR = EVAL_GENERAL_DIR / "evaluacion_final"
-    EVAL_DIR.mkdir(parents=True, exist_ok=True)
+    LOPO_DIR = MODELS_DIR / "LOPO"
+    LOPO_DIR.mkdir(parents=True, exist_ok=True)
+
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-    logger.info("INICIANDO EVALUACION METRICA")
-    
+    logger.info("INICIANDO EVALUACION SUPERFICIAL (TEST INDEPENDIENTE)")
+
     cfg_data = EvalConfig(dataset_path=args.dataset, model_dir=MODELS_DIR)
     loader = GaitEvalLoader(cfg_data)
-    
+
     # CARGAR ARREGLOS DE EVALUACION
     x_test, y_test, _ = loader.get_test_data()
     fft_proc = FFTProcessor()
@@ -445,31 +652,41 @@ def main() -> None:
     y_true_f, prob_f = evaluator_f.extract_probabilities(fft_ts_l)
     y_true_h, prob_h = evaluator_h.extract_probabilities(h_ts)
 
-    # EVALUAR METRICAS FINALES
-    metrics_t = evaluator_t.compute_metrics(y_true_t, prob_t, opt_thresh_t, "MODELO TRANSFORMER", GRAFICAS_DIR)
-    metrics_f = evaluator_f.compute_metrics(y_true_f, prob_f, opt_thresh_f, "MODELO FFT", GRAFICAS_DIR)
-    metrics_h = evaluator_h.compute_metrics(y_true_h, prob_h, opt_thresh_h, "MODELO HIBRIDO FINAL", GRAFICAS_DIR)
+    # EVALUAR METRICAS FINALES (graficas van a evaluacion_superficial/graficas/)
+    metrics_t = evaluator_t.compute_metrics(y_true_t, prob_t, opt_thresh_t, "MODELO TRANSFORMER", SUPERFICIAL_GRAFICAS_DIR)
+    metrics_f = evaluator_f.compute_metrics(y_true_f, prob_f, opt_thresh_f, "MODELO FFT", SUPERFICIAL_GRAFICAS_DIR)
+    metrics_h = evaluator_h.compute_metrics(y_true_h, prob_h, opt_thresh_h, "MODELO HIBRIDO FINAL", SUPERFICIAL_GRAFICAS_DIR)
 
-    # CALCULAR DISCRIMINACION Y CALIBRACION
+    # CALCULAR DISCRIMINACION Y CALIBRACION (+ Balanced Accuracy y MCC,
+    # metricas adicionales pedidas para que este resumen tambien sea
+    # informativo pese a ser una evaluacion superficial/no representativa)
     reporte = []
     for nombre, yt, yp in [("Transformer", y_true_t, prob_t), ("FFT", y_true_f, prob_f), ("Hibrido", y_true_h, prob_h)]:
         b, i, s = calibration_metrics(yt, yp)
-        reporte.append({"Modelo": nombre, "Brier": b, "Intercepto": i, "Pendiente": s})
-    
+        y_pred_05 = (yp >= 0.5).astype(int)
+        bal_acc = balanced_accuracy_score(yt, y_pred_05)
+        mcc = matthews_corrcoef(yt, y_pred_05)
+        reporte.append({
+            "Modelo": nombre, "Brier": b, "Intercepto": i, "Pendiente": s,
+            "Balanced_Accuracy": bal_acc, "MCC": mcc
+        })
+
     # EXPORTAR METRICAS CALIBRACION
-    pd.DataFrame(reporte).to_csv(EVAL_DIR / "calibracion_eval.csv", index=False)
-    
+    pd.DataFrame(reporte).to_csv(SUPERFICIAL_DIR / "calibracion_eval.csv", index=False)
+
     # EXPORTAR METRICAS TEXTO
     pd.DataFrame([
         {"Modelo": "Transformer", **metrics_t},
         {"Modelo": "FFT", **metrics_f},
         {"Modelo": "Hibrido", **metrics_h},
-    ]).to_csv(EVAL_DIR / "metricas_basicas.txt", sep='\t', index=False)
+    ]).to_csv(SUPERFICIAL_DIR / "metricas_basicas.txt", sep='\t', index=False)
 
     # CONSTRUIR TABLA ASCII REPORTE
     lineas_reporte = []
     lineas_reporte.append("\n" + "=" * 95)
-    lineas_reporte.append("RESULTADOS FINALES (TEST INDEPENDIENTE)")
+    lineas_reporte.append("RESULTADOS FINALES (TEST INDEPENDIENTE) — ADVERTENCIA: metrica")
+    lineas_reporte.append("secundaria/no representativa (test = 1 solo paciente). La metrica")
+    lineas_reporte.append("principal de referencia es LOPO (carpeta LOPO/comparativa/).")
     lineas_reporte.append("=" * 95)
     for modelo, met, cal in zip(["TRANSFORMER", "FFT", "HIBRIDO"], [metrics_t, metrics_f, metrics_h], reporte):
         lineas_reporte.append(
@@ -478,6 +695,8 @@ def main() -> None:
             f" | Sens={met['Sensibilidad']:.2%}"
             f" | Spec={met['Especificidad']:.2%}"
             f" | FPR={met['FPR']:.2%}"
+            f" | BalAcc={cal['Balanced_Accuracy']:.4f}"
+            f" | MCC={cal['MCC']:.4f}"
             f" | Brier={cal['Brier']:.4f}"
             f" | Int={cal['Intercepto']:.3f}"
             f" | Pend={cal['Pendiente']:.3f}"
@@ -487,23 +706,28 @@ def main() -> None:
     # IMPRIMIR E INYECTAR REPORTE TXT
     texto_final = "\n".join(lineas_reporte)
     print(texto_final)
-    
-    with open(EVAL_DIR / "reporte_final_evaluacion.txt", "w", encoding="utf-8") as f_txt:
-        f_txt.write("REPORTE OPERACIONAL DE INFERENCIA BIOMEDICA\n")
-        f_txt.write(texto_final)
-    logger.info("DOCUMENTO DE TEXTO GENERADO CORRECTAMENTE")
 
-   # DISPARAR ENTORNO LOPO OPCIONAL
-    
-    LOPO_DIR = EVAL_GENERAL_DIR / "LOPO_HIBRIDO"
-    LOPO_DIR.mkdir(parents=True, exist_ok=True)
-    
+    with open(SUPERFICIAL_DIR / "reporte_final_evaluacion.txt", "w", encoding="utf-8") as f_txt:
+        f_txt.write("REPORTE OPERACIONAL DE INFERENCIA BIOMEDICA (EVALUACION SUPERFICIAL)\n")
+        f_txt.write(texto_final)
+    logger.info("EVALUACION SUPERFICIAL COMPLETADA")
+
+    # -------------------------------------------------------------------
+    # LOPO (metrica principal): cada esquema guarda en su propia carpeta
+    # dentro de LOPO/, y al final se genera la comparativa general.
+    # -------------------------------------------------------------------
     if args.run_lopo:
         x_all, groups_all, y_all = loader.get_all_raw_data()
         train_cfg = TrainConfig(device=DEVICE)
-        run_lopo_evaluation(x_all, y_all, groups_all, m1_cfg, train_cfg, EVAL_DIR)
-        run_lopo_evaluation_fft(x_all, y_all, groups_all, train_cfg, EVAL_DIR)
-        run_lopo_late_fusion(x_all, y_all, groups_all, m1_cfg, train_cfg, EVAL_DIR)
+
+        resumenes: Dict[str, Dict[str, Any]] = {}
+        resumenes["hibrido"] = run_lopo_evaluation(x_all, y_all, groups_all, m1_cfg, train_cfg, LOPO_DIR)
+        resumenes["fft"] = run_lopo_evaluation_fft(x_all, y_all, groups_all, train_cfg, LOPO_DIR)
+        resumenes_lf = run_lopo_late_fusion(x_all, y_all, groups_all, m1_cfg, train_cfg, LOPO_DIR)
+        for nombre_variante, resumen_variante in resumenes_lf.items():
+            resumenes[f"latefusion_{nombre_variante}"] = resumen_variante
+
+        generar_comparativa_general(resumenes, LOPO_DIR / "comparativa")
     else:
         logger.info("EVALUACION LOPO OMITIDA: Use --run-lopo para lanzar validacion cruzada paciente a paciente.")
 
@@ -517,8 +741,8 @@ def run_lopo_evaluation(
     groups_all: np.ndarray,
     t_cfg: TransformerConfig,
     train_cfg: TrainConfig,
-    eval_dir: Path
-) -> None:
+    lopo_dir: Path
+) -> Dict[str, Any]:
     """
     LOPO real: reentrena el modelo hibrido desde cero en cada fold,
     dejando siempre un paciente distinto fuera de train/val.
@@ -538,6 +762,7 @@ def run_lopo_evaluation(
     all_y_prob: List[float] = []
     fold_scores: List[float] = []
     patient_ids: List[str] = []
+    fold_metricas: List[Dict[str, float]] = []
 
     logger.info(
         f"INICIANDO LOPO REAL HIBRIDO (REENTRENAMIENTO POR FOLD) — {len(unique_p)} PACIENTES"
@@ -560,10 +785,16 @@ def run_lopo_evaluation(
         x_val, y_val = x_all[val_idx_f], y_all[val_idx_f]
         x_ts, y_ts = x_all[test_idx], y_all[test_idx]
 
-        # Debe haber ambas clases en entrenamiento y prueba
-        if len(np.unique(y_tr)) < 2 or len(np.unique(y_ts)) < 2:
+        # Entrenamiento requiere ambas clases (no se puede entrenar un
+        # clasificador binario con una sola clase en train). Un paciente
+        # de TEST monoclase (ej. 02548893X-118, MGM-202406-79) YA NO se
+        # descarta con continue: se entrena igual el fold y se evalua,
+        # registrando NaN en AUC/PR-AUC (no calculables con una sola
+        # clase real) pero calculando balanced_accuracy y MCC, que si
+        # aportan informacion util sobre ese paciente.
+        if len(np.unique(y_tr)) < 2:
             logger.warning(
-                f"FOLD {fold} ({test_patient}) OMITIDO — CLASE UNICA"
+                f"FOLD {fold} ({test_patient}) OMITIDO — TRAIN CON CLASE UNICA"
             )
             continue
 
@@ -641,17 +872,21 @@ def run_lopo_evaluation(
 
                 y_true_fold.extend(yb.numpy())
 
-        auc = roc_auc_score(y_true_fold, probs_fold)
+        metricas_fold = _metricas_por_fold(y_true_fold, probs_fold)
+        auc = metricas_fold["auc"]
 
-        fold_scores.append(auc)
+        fold_scores.append(auc if not np.isnan(auc) else 0.0)
         patient_ids.append(str(test_patient))
+        fold_metricas.append(metricas_fold)
 
         all_y_true.extend(y_true_fold)
         all_y_prob.extend(probs_fold)
 
+        auc_str = f"{auc:.4f}" if not np.isnan(auc) else "NaN (monoclase)"
         logger.info(
             f"FOLD {fold:02d} | PACIENTE={test_patient} | "
-            f"AUC={auc:.4f} | N_TEST={len(y_true_fold)}"
+            f"AUC={auc_str} | BalAcc={metricas_fold['balanced_accuracy']:.4f} | "
+            f"MCC={metricas_fold['mcc']:.4f} | N_TEST={len(y_true_fold)}"
         )
 
         del model_fold, trainer, tr_l, val_l, ts_l
@@ -659,15 +894,17 @@ def run_lopo_evaluation(
         torch.cuda.empty_cache()
         gc.collect()
 
-    _finalizar_lopo(
+    resumen = _finalizar_lopo(
         all_y_true=all_y_true,
         all_y_prob=all_y_prob,
         fold_scores=fold_scores,
         patient_ids=patient_ids,
-        eval_dir=eval_dir,
+        lopo_dir=lopo_dir,
         prefijo="hibrido",
-        titulo_grafica="LOPO REAL HIBRIDO — Reentrenado por Fold"
+        titulo_grafica="LOPO REAL HIBRIDO — Reentrenado por Fold",
+        fold_metricas=fold_metricas
     )
+    return resumen
 
 
 def run_lopo_evaluation_fft(
@@ -675,8 +912,8 @@ def run_lopo_evaluation_fft(
     y_all: np.ndarray,
     groups_all: np.ndarray,
     train_cfg: TrainConfig,
-    eval_dir: Path
-) -> None:
+    lopo_dir: Path
+) -> Dict[str, Any]:
     """
     LOPO real para el modelo FFT puro: reentrena FFTModel desde cero en
     cada fold, dejando siempre un paciente distinto fuera de train/val.
@@ -700,6 +937,7 @@ def run_lopo_evaluation_fft(
     all_y_prob: List[float] = []
     fold_scores: List[float] = []
     patient_ids: List[str] = []
+    fold_metricas: List[Dict[str, float]] = []
 
     logger.info(
         f"INICIANDO LOPO REAL FFT (REENTRENAMIENTO POR FOLD) — {len(unique_p)} PACIENTES"
@@ -722,10 +960,13 @@ def run_lopo_evaluation_fft(
         x_val, y_val = x_all[val_idx_f], y_all[val_idx_f]
         x_ts, y_ts = x_all[test_idx], y_all[test_idx]
 
-        # Debe haber ambas clases en entrenamiento y prueba
-        if len(np.unique(y_tr)) < 2 or len(np.unique(y_ts)) < 2:
+        # Entrenamiento requiere ambas clases. Un paciente de TEST
+        # monoclase ya NO se descarta con continue: se entrena y evalua
+        # igual, registrando NaN en AUC/PR-AUC pero calculando
+        # balanced_accuracy y MCC (ver _metricas_por_fold).
+        if len(np.unique(y_tr)) < 2:
             logger.warning(
-                f"FOLD {fold} ({test_patient}) OMITIDO — CLASE UNICA"
+                f"FOLD {fold} ({test_patient}) OMITIDO — TRAIN CON CLASE UNICA"
             )
             continue
 
@@ -802,17 +1043,21 @@ def run_lopo_evaluation_fft(
 
                 y_true_fold.extend(yb.numpy())
 
-        auc = roc_auc_score(y_true_fold, probs_fold)
+        metricas_fold = _metricas_por_fold(y_true_fold, probs_fold)
+        auc = metricas_fold["auc"]
 
-        fold_scores.append(auc)
+        fold_scores.append(auc if not np.isnan(auc) else 0.0)
         patient_ids.append(str(test_patient))
+        fold_metricas.append(metricas_fold)
 
         all_y_true.extend(y_true_fold)
         all_y_prob.extend(probs_fold)
 
+        auc_str = f"{auc:.4f}" if not np.isnan(auc) else "NaN (monoclase)"
         logger.info(
             f"FOLD {fold:02d} | PACIENTE={test_patient} | "
-            f"AUC={auc:.4f} | N_TEST={len(y_true_fold)}"
+            f"AUC={auc_str} | BalAcc={metricas_fold['balanced_accuracy']:.4f} | "
+            f"MCC={metricas_fold['mcc']:.4f} | N_TEST={len(y_true_fold)}"
         )
 
         del model_fold, trainer, tr_l, val_l, ts_l
@@ -820,15 +1065,17 @@ def run_lopo_evaluation_fft(
         torch.cuda.empty_cache()
         gc.collect()
 
-    _finalizar_lopo(
+    resumen = _finalizar_lopo(
         all_y_true=all_y_true,
         all_y_prob=all_y_prob,
         fold_scores=fold_scores,
         patient_ids=patient_ids,
-        eval_dir=eval_dir,
+        lopo_dir=lopo_dir,
         prefijo="fft",
-        titulo_grafica="LOPO REAL FFT — Reentrenado por Fold"
+        titulo_grafica="LOPO REAL FFT — Reentrenado por Fold",
+        fold_metricas=fold_metricas
     )
+    return resumen
 
 
 def run_lopo_late_fusion(
@@ -837,8 +1084,8 @@ def run_lopo_late_fusion(
     groups_all: np.ndarray,
     t_cfg: TransformerConfig,
     train_cfg: TrainConfig,
-    eval_dir: Path
-) -> None:
+    lopo_dir: Path
+) -> Dict[str, Dict[str, Any]]:
     """
     LOPO real para Late Fusion: en cada fold, reentrena Transformer y FFT
     POR SEPARADO desde cero (dejando un paciente distinto fuera de train/val
@@ -863,9 +1110,9 @@ def run_lopo_late_fusion(
     unique_p = np.unique(groups_all)
 
     resultados_por_variante: Dict[str, Dict[str, List]] = {
-        "media_geometrica": {"y_true": [], "y_prob": [], "fold_scores": [], "patient_ids": []},
-        "voto_mayoritario": {"y_true": [], "y_prob": [], "fold_scores": [], "patient_ids": []},
-        "meta_clasificador": {"y_true": [], "y_prob": [], "fold_scores": [], "patient_ids": []},
+        "media_geometrica": {"y_true": [], "y_prob": [], "fold_scores": [], "patient_ids": [], "fold_metricas": []},
+        "voto_mayoritario": {"y_true": [], "y_prob": [], "fold_scores": [], "patient_ids": [], "fold_metricas": []},
+        "meta_clasificador": {"y_true": [], "y_prob": [], "fold_scores": [], "patient_ids": [], "fold_metricas": []},
     }
 
     logger.info(
@@ -888,8 +1135,12 @@ def run_lopo_late_fusion(
         x_val, y_val = x_all[val_idx_f], y_all[val_idx_f]
         x_ts, y_ts = x_all[test_idx], y_all[test_idx]
 
-        if len(np.unique(y_tr)) < 2 or len(np.unique(y_ts)) < 2:
-            logger.warning(f"FOLD {fold} ({test_patient}) OMITIDO — CLASE UNICA")
+        # Entrenamiento requiere ambas clases. Un paciente de TEST
+        # monoclase ya NO se descarta: se entrena y evalua igual,
+        # registrando NaN en AUC/PR-AUC de esa variante para ese fold
+        # (ver _metricas_por_fold), pero calculando balanced_accuracy y MCC.
+        if len(np.unique(y_tr)) < 2:
+            logger.warning(f"FOLD {fold} ({test_patient}) OMITIDO — TRAIN CON CLASE UNICA")
             continue
 
         # ESCALADO (fit unicamente con entrenamiento)
@@ -973,22 +1224,28 @@ def run_lopo_late_fusion(
         # ---------------------------------------------------------------
         # REGISTRAR RESULTADOS DE CADA VARIANTE
         # ---------------------------------------------------------------
+        auc_log_partes = []
         for nombre, prob_fold in [
             ("media_geometrica", prob_geom),
             ("voto_mayoritario", prob_voto),
             ("meta_clasificador", prob_meta),
         ]:
-            auc_fold = roc_auc_score(y_ts, prob_fold) if len(set(y_ts)) > 1 else 0.0
+            metricas_fold = _metricas_por_fold(y_ts, prob_fold)
+            auc_fold = metricas_fold["auc"]
+
             resultados_por_variante[nombre]["y_true"].extend(y_ts.tolist())
             resultados_por_variante[nombre]["y_prob"].extend(prob_fold.tolist())
-            resultados_por_variante[nombre]["fold_scores"].append(auc_fold)
+            resultados_por_variante[nombre]["fold_scores"].append(auc_fold if not np.isnan(auc_fold) else 0.0)
             resultados_por_variante[nombre]["patient_ids"].append(str(test_patient))
+            resultados_por_variante[nombre]["fold_metricas"].append(metricas_fold)
+
+            auc_str = f"{auc_fold:.4f}" if not np.isnan(auc_fold) else "NaN"
+            auc_log_partes.append(f"AUC_{nombre}={auc_str}")
 
         logger.info(
             f"FOLD {fold:02d} | PACIENTE={test_patient} | "
-            f"AUC_geom={roc_auc_score(y_ts, prob_geom):.4f} | "
-            f"AUC_voto={roc_auc_score(y_ts, prob_voto):.4f} | "
-            f"AUC_meta={roc_auc_score(y_ts, prob_meta):.4f} | N_TEST={len(y_ts)}"
+            + " | ".join(auc_log_partes) +
+            f" | N_TEST={len(y_ts)}"
         )
 
         del model_transformer_fold, model_fft_fold, trainer_t, trainer_f
@@ -997,16 +1254,21 @@ def run_lopo_late_fusion(
         gc.collect()
 
     # CONSOLIDAR CADA VARIANTE POR SEPARADO
+    resumenes_late_fusion: Dict[str, Dict[str, Any]] = {}
     for nombre, datos in resultados_por_variante.items():
-        _finalizar_lopo(
+        resumen = _finalizar_lopo(
             all_y_true=datos["y_true"],
             all_y_prob=datos["y_prob"],
             fold_scores=datos["fold_scores"],
             patient_ids=datos["patient_ids"],
-            eval_dir=eval_dir,
+            lopo_dir=lopo_dir,
             prefijo=f"latefusion_{nombre}",
-            titulo_grafica=f"LOPO REAL LATE FUSION ({nombre}) — Reentrenado por Fold"
+            titulo_grafica=f"LOPO REAL LATE FUSION ({nombre}) — Reentrenado por Fold",
+            fold_metricas=datos["fold_metricas"]
         )
+        resumenes_late_fusion[nombre] = resumen
+
+    return resumenes_late_fusion
 
 
 class GaitTrainerFFT:
@@ -1063,34 +1325,99 @@ class GaitTrainerFFT:
         return roc_auc_score(y_true, y_prob) if len(set(y_true)) > 1 else 0.0
 
 
+def _metricas_por_fold(y_true: List[int], y_prob: List[float], threshold: float = 0.50) -> Dict[str, float]:
+    """
+    Calcula AUC, PR-AUC, balanced accuracy y MCC para un unico fold,
+    con proteccion explicita contra pacientes monoclase.
+
+    Algunos pacientes del dataset (ej. 02548893X-118, MGM-202406-79) solo
+    tienen una clase presente (unicamente "marcha"). En ese caso, AUC y
+    PR-AUC no estan matematicamente definidos (roc_auc_score/
+    average_precision_score lanzan ValueError con una sola clase en
+    y_true) y se registran como NaN en vez de intentar calcularlos o de
+    detener el script. Balanced accuracy y MCC si se calculan siempre,
+    ya que no requieren ambas clases en y_true para tener sentido (aunque
+    su interpretacion con una sola clase real es limitada, no producen
+    una excepcion).
+
+    :param y_true: Etiquetas reales del fold (puede ser monoclase).
+    :param y_prob: Probabilidades predichas del fold.
+    :param threshold: Umbral de decision para binarizar y calcular
+        balanced accuracy y MCC.
+    :return: Diccionario con auc, pr_auc, balanced_accuracy, mcc. Los
+        valores no calculables (por monoclase) quedan como float('nan').
+    """
+    y_true_arr = np.asarray(y_true)
+    y_prob_arr = np.asarray(y_prob)
+    y_pred_arr = (y_prob_arr >= threshold).astype(int)
+
+    es_monoclase = len(np.unique(y_true_arr)) < 2
+
+    auc = roc_auc_score(y_true_arr, y_prob_arr) if not es_monoclase else float("nan")
+    pr_auc = average_precision_score(y_true_arr, y_prob_arr) if not es_monoclase else float("nan")
+
+    # balanced_accuracy_score y matthews_corrcoef no requieren ambas clases
+    # en y_true para ejecutar sin excepcion, pero con y_pred tambien
+    # monoclase (ej. el fold entero predicho igual) devuelven un valor
+    # degenerado (0.5 o 0.0) en vez de fallar -- se calculan siempre.
+    balanced_acc = balanced_accuracy_score(y_true_arr, y_pred_arr)
+    mcc = matthews_corrcoef(y_true_arr, y_pred_arr)
+
+    return {
+        "auc": auc,
+        "pr_auc": pr_auc,
+        "balanced_accuracy": balanced_acc,
+        "mcc": mcc,
+        "es_monoclase": es_monoclase,
+    }
+
+
 def _finalizar_lopo(
     all_y_true: List[int],
     all_y_prob: List[float],
     fold_scores: List[float],
     patient_ids: List[str],
-    eval_dir: Path,
+    lopo_dir: Path,
     prefijo: str,
-    titulo_grafica: str
-) -> None:
+    titulo_grafica: str,
+    fold_metricas: List[Dict[str, float]] = None
+) -> Dict[str, Any]:
     """
     Consolida resultados de un esquema LOPO (fold-por-fold ya ejecutados)
-    en CSVs de AUC por fold, metricas globales, calibracion y matriz de
-    confusion, compartido por run_lopo_evaluation, run_lopo_evaluation_fft
-    y run_lopo_late_fusion.
+    en una carpeta DEDICADA por modelo (lopo_dir / prefijo /), con una
+    subcarpeta "graficas" para la matriz de confusion. Compartido por
+    run_lopo_evaluation, run_lopo_evaluation_fft y run_lopo_late_fusion.
+
+    Estructura generada (dentro de lopo_dir / prefijo /):
+        lopo_fold_aucs.csv
+        lopo_metricas_por_paciente.csv
+        metricas_lopo.csv
+        calibracion_lopo.csv
+        graficas/LOPO_Global_Eval_Matriz.png
 
     :param all_y_true: Etiquetas reales concatenadas de todos los folds.
     :param all_y_prob: Probabilidades predichas concatenadas de todos los folds.
     :param fold_scores: AUC individual de cada fold (paciente dejado fuera).
     :param patient_ids: Identificador de paciente correspondiente a cada fold.
-    :param eval_dir: Directorio de salida.
-    :param prefijo: Prefijo de archivo (ej. "hibrido", "fft",
-        "latefusion_media_geometrica") para no sobreescribir resultados
-        de un modelo/variante con los de otro.
+    :param lopo_dir: Carpeta base LOPO/ (se crea lopo_dir/prefijo/ dentro).
+    :param prefijo: Nombre del esquema (ej. "hibrido", "fft",
+        "latefusion_media_geometrica"), usado como nombre de subcarpeta.
     :param titulo_grafica: Titulo mostrado en la matriz de confusion exportada.
+    :param fold_metricas: Lista (un dict por fold, mismo orden que
+        patient_ids) con las metricas devueltas por _metricas_por_fold.
+    :return: Diccionario resumen (usado despues por la comparativa
+        general): auc_global, pr_auc_global, balanced_accuracy_global,
+        mcc_global, auc_promedio_folds, auc_std_folds, n_folds,
+        peor_paciente, peor_auc_fold, n_parametros (se completa fuera).
     """
+    modelo_dir = lopo_dir / prefijo
+    graficas_dir = modelo_dir / "graficas"
+    modelo_dir.mkdir(parents=True, exist_ok=True)
+    graficas_dir.mkdir(parents=True, exist_ok=True)
+
     if not all_y_true:
         logger.warning(f"LOPO ({prefijo.upper()}): SIN RESULTADOS PARA CONSOLIDAR")
-        return
+        return {}
 
     auc_global = roc_auc_score(all_y_true, all_y_prob)
 
@@ -1106,9 +1433,62 @@ def _finalizar_lopo(
         "paciente": patient_ids,
         "auc": fold_scores
     }).to_csv(
-        eval_dir / f"lopo_fold_aucs_eval_{prefijo}.csv",
+        modelo_dir / "lopo_fold_aucs.csv",
         index=False
     )
+
+    # TABLA EXPANDIDA POR PACIENTE (doble entrada): AUC, PR-AUC, balanced
+    # accuracy y MCC por cada sujeto dejado fuera, con fila final de
+    # media +/- desviacion estandar de toda la poblacion.
+    peor_paciente, peor_auc_fold = None, None
+    if fold_metricas is not None:
+        filas_por_paciente = []
+        for paciente, m in zip(patient_ids, fold_metricas):
+            filas_por_paciente.append({
+                "paciente": paciente,
+                "monoclase": m["es_monoclase"],
+                "AUC": m["auc"],
+                "PR_AUC": m["pr_auc"],
+                "Balanced_Accuracy": m["balanced_accuracy"],
+                "MCC": m["mcc"],
+            })
+
+        df_por_paciente = pd.DataFrame(filas_por_paciente)
+
+        # IDENTIFICAR EL PEOR PACIENTE POR AUC (ignorando monoclase, que
+        # no tiene AUC calculable), para la comparativa legible despues.
+        df_con_auc = df_por_paciente.dropna(subset=["AUC"])
+        if not df_con_auc.empty:
+            fila_peor = df_con_auc.loc[df_con_auc["AUC"].idxmin()]
+            peor_paciente = fila_peor["paciente"]
+            peor_auc_fold = float(fila_peor["AUC"])
+
+        fila_media = {
+            "paciente": "MEDIA_POBLACION",
+            "monoclase": "",
+            "AUC": np.nanmean(df_por_paciente["AUC"]),
+            "PR_AUC": np.nanmean(df_por_paciente["PR_AUC"]),
+            "Balanced_Accuracy": np.nanmean(df_por_paciente["Balanced_Accuracy"]),
+            "MCC": np.nanmean(df_por_paciente["MCC"]),
+        }
+        fila_std = {
+            "paciente": "STD_POBLACION",
+            "monoclase": "",
+            "AUC": np.nanstd(df_por_paciente["AUC"]),
+            "PR_AUC": np.nanstd(df_por_paciente["PR_AUC"]),
+            "Balanced_Accuracy": np.nanstd(df_por_paciente["Balanced_Accuracy"]),
+            "MCC": np.nanstd(df_por_paciente["MCC"]),
+        }
+        df_por_paciente = pd.concat(
+            [df_por_paciente, pd.DataFrame([fila_media, fila_std])],
+            ignore_index=True
+        )
+
+        df_por_paciente.to_csv(
+            modelo_dir / "lopo_metricas_por_paciente.csv",
+            index=False
+        )
+        logger.info(f"TABLA POR PACIENTE (AUC/PR-AUC/BalAcc/MCC) EXPORTADA: {prefijo}")
 
     umbral_global = 0.50
 
@@ -1122,14 +1502,21 @@ def _finalizar_lopo(
 
     tn, fp, fn, tp = cm_global.ravel()
 
+    balanced_acc_global = balanced_accuracy_score(all_y_true, y_pred_global)
+    mcc_global = matthews_corrcoef(all_y_true, y_pred_global)
+    pr_auc_global = average_precision_score(all_y_true, all_y_prob)
+
     pd.DataFrame([{
         "AUC": auc_global,
+        "PR_AUC": pr_auc_global,
+        "Balanced_Accuracy": balanced_acc_global,
+        "MCC": mcc_global,
         "Sensibilidad": tp / (tp + fn),
         "Especificidad": tn / (tn + fp),
         "FPR": fp / (fp + tn),
         "Threshold": umbral_global
     }]).to_csv(
-        eval_dir / f"metricas_lopo_{prefijo}.csv",
+        modelo_dir / "metricas_lopo.csv",
         index=False
     )
 
@@ -1144,7 +1531,7 @@ def _finalizar_lopo(
         "Intercepto": inter,
         "Pendiente": pend
     }]).to_csv(
-        eval_dir / f"calibracion_lopo_{prefijo}.csv",
+        modelo_dir / "calibracion_lopo.csv",
         index=False
     )
 
@@ -1162,7 +1549,7 @@ def _finalizar_lopo(
     )
 
     plt.savefig(
-        eval_dir / f"LOPO_Global_Eval_Matriz_{prefijo}.png",
+        graficas_dir / "LOPO_Global_Eval_Matriz.png",
         dpi=300,
         bbox_inches="tight"
     )
@@ -1170,6 +1557,20 @@ def _finalizar_lopo(
     plt.close(fig)
 
     logger.info(f"MATRIZ GRAFICA LOPO ({prefijo.upper()}) EXPORTADA CON EXITO")
+
+    return {
+        "prefijo": prefijo,
+        "auc_global": auc_global,
+        "pr_auc_global": pr_auc_global,
+        "balanced_accuracy_global": balanced_acc_global,
+        "mcc_global": mcc_global,
+        "brier": brier,
+        "auc_promedio_folds": float(np.mean(fold_scores)),
+        "auc_std_folds": float(np.std(fold_scores)),
+        "n_folds": len(fold_scores),
+        "peor_paciente": peor_paciente,
+        "peor_auc_fold": peor_auc_fold,
+    }
 
 
 if __name__ == "__main__":
