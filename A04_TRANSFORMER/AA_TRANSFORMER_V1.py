@@ -14,7 +14,7 @@ import copy
 import random
 import os
 from pathlib import Path
-from typing import Tuple, List, Optional, Dict
+from typing import Tuple, Optional, Dict
 from pydantic import BaseModel, FilePath, PositiveInt, confloat, Field
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import confusion_matrix, roc_auc_score
@@ -94,6 +94,22 @@ class GaitDatasetLoader:
         np.save(self.config.output_dir / "train_idx.npy", train_idx)
         np.save(self.config.output_dir / "val_idx.npy",   val_idx)
         np.save(self.config.output_dir / "test_idx.npy",  test_idx)
+
+        # GUARDAR TAMBIEN LOS NOMBRES DE PACIENTE (no solo los indices
+        # numericos), para poder auditar rapidamente "quien quedo en
+        # test/val" sin tener que recargar el HDF5 completo y cruzar
+        # indices manualmente cada vez que se reentrena con un dataset
+        # distinto (ej. tras anadir pacientes nuevos).
+        import json
+        info_particion = {
+            "test_patient": str(test_patient),
+            "val_patient": str(val_patient),
+            "train_patients": sorted(str(p) for p in unique_patients if p not in (test_patient, val_patient)),
+            "n_train_patients": len(unique_patients) - 2,
+        }
+        with open(self.config.output_dir / "particion_pacientes.json", "w", encoding="utf-8") as f:
+            json.dump(info_particion, f, indent=4, ensure_ascii=False)
+
         logger.info(f"LOPO TEST={test_patient} VAL={val_patient} TRAIN={len(unique_patients)-2} pacientes")
         logger.info(f"TRAIN={len(train_idx)} VAL={len(val_idx)} TEST={len(test_idx)}")
 
@@ -239,6 +255,22 @@ class FFTModel(nn.Module):
 
 
 class GaitHybridModel(nn.Module):
+    """
+    Modelo Hibrido (Early Fusion): concatena la rama Transformer (temporal)
+    con la rama FFT (frecuencial) antes de un cabezal de clasificacion final.
+
+    NOTA IMPORTANTE DE DISENO: si se proporciona pretrained_transformer,
+    la rama Transformer se inicializa con esos pesos YA ENTRENADOS y
+    luego se CONGELA por completo (requires_grad=False en todos sus
+    parametros). Es decir, "Hibrido" en este caso no entrena su rama
+    temporal desde cero junto con la rama FFT -- solo aprende la rama
+    FFT y el cabezal de fusion final, reutilizando el Transformer ya
+    optimizado como extractor de features fijo. Esto reduce riesgo de
+    sobreajuste y acelera el entrenamiento, pero significa que el
+    Hibrido es menos "conjunto" de lo que su nombre sugiere: no hay
+    coadaptacion entre ambas ramas durante el entrenamiento, solo fusion
+    de una rama fija (Transformer) con una rama entrenable (FFT).
+    """
     def __init__(self, t_cfg: TransformerConfig, fft_input_dim: int, pretrained_transformer: Optional[nn.Module] = None) -> None:
         super(GaitHybridModel, self).__init__()
         self.transformer_branch = GaitTransformer(t_cfg)
@@ -289,7 +321,10 @@ class GaitTrainer:
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor=0.5, patience=5)
         self.best_model_state = None
         self.use_amp   = torch.cuda.is_available()
-        self.scaler    = torch.cuda.amp.GradScaler(enabled=self.use_amp)
+        # API NUEVA (torch.amp, no torch.cuda.amp -- deprecado en
+        # versiones recientes de PyTorch, aunque aun funciona como alias
+        # de compatibilidad).
+        self.scaler    = torch.amp.GradScaler('cuda', enabled=self.use_amp)
 
     def train(self, train_loader: DataLoader, val_loader: DataLoader, verbose: bool = True) -> nn.Module:
         if verbose:
@@ -305,7 +340,7 @@ class GaitTrainer:
             for batch in train_loader:
                 self.optimizer.zero_grad()
 
-                with torch.cuda.amp.autocast(enabled=self.use_amp):
+                with torch.amp.autocast('cuda', enabled=self.use_amp):
                     if len(batch) == 3:
                         xt  = batch[0].to(self.config.device)
                         xf  = batch[1].to(self.config.device)
@@ -352,7 +387,7 @@ class GaitTrainer:
 
         with torch.no_grad():
             for batch in loader:
-                with torch.cuda.amp.autocast(enabled=self.use_amp):
+                with torch.amp.autocast('cuda', enabled=self.use_amp):
                     if len(batch) == 3:
                         xt  = batch[0].to(self.config.device)
                         xf  = batch[1].to(self.config.device)
@@ -380,7 +415,12 @@ class GaitEvaluator:
         self.device = device
 
     def plot_results(self, test_loader: DataLoader, val_loader: DataLoader, title: str, save_dir: Optional[Path] = None) -> Tuple[float, Dict[str, float]]:
-        opt_thresh = 0.50  # UMBRAL FIJO
+        # UMBRAL FIJO POR DISENO (no calibrado tipo Youden's J). No se
+        # calcula el punto optimo sobre val_loader -- aunque el parametro
+        # se recibe, se usa 0.50 fijo. Ver documentacion del proyecto
+        # para el razonamiento (evitar que un .joblib de umbral corrupto
+        # o mal generado altere la clasificacion sin que se note).
+        opt_thresh = 0.50
         self.model.eval()
         y_true, y_prob = [], []
 
@@ -416,7 +456,7 @@ class GaitEvaluator:
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
                     xticklabels=['REPOSO', 'MARCHA'],
                     yticklabels=['REPOSO', 'MARCHA'])
-        plt.title(f'{title}\nAUC: {auc_score:.2f} | Umbral Youden (Val): {opt_thresh:.2f}')
+        plt.title(f'{title}\nAUC: {auc_score:.2f} | Umbral Fijo: {opt_thresh:.2f}')
         plt.ylabel('Real')
         plt.xlabel('Predicho')
 
