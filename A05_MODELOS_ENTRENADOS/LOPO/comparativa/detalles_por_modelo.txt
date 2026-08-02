@@ -1,0 +1,58 @@
+DETALLES POR MODELO — COMPARATIVA LOPO
+Fecha: 2026-08-01 03:21
+============================================================================================
+
+FFT (solo)
+--------------------------------------------------------------------------------------------
+  AUC global (todas las predicciones concatenadas): 0.9813
+  AUC promedio por fold: 0.8676 (STD: 0.3151)
+  PR-AUC: 0.9827  |  Balanced Accuracy: 0.9461  |  MCC: 0.8891
+  Brier score (calibracion): 0.0471
+  Folds evaluados: 27
+  Paciente mas dificil: 20266247G-97 (AUC=0.6168)
+  Parametros entrenables: 245,443
+  Detalle completo (por paciente): ver LOPO/fft/lopo_metricas_por_paciente.csv
+
+Late Fusion — Media Geométrica
+--------------------------------------------------------------------------------------------
+  AUC global (todas las predicciones concatenadas): 0.9781
+  AUC promedio por fold: 0.8717 (STD: 0.3126)
+  PR-AUC: 0.9785  |  Balanced Accuracy: 0.9313  |  MCC: 0.8578
+  Brier score (calibracion): 0.0662
+  Folds evaluados: 27
+  Paciente mas dificil: 20266247G-97 (AUC=0.7447)
+  Parametros entrenables: 831,621
+  Detalle completo (por paciente): ver LOPO/latefusion_media_geometrica/lopo_metricas_por_paciente.csv
+
+Late Fusion — Meta-Clasificador
+--------------------------------------------------------------------------------------------
+  AUC global (todas las predicciones concatenadas): 0.9774
+  AUC promedio por fold: 0.8734 (STD: 0.3128)
+  PR-AUC: 0.9676  |  Balanced Accuracy: 0.9290  |  MCC: 0.8546
+  Brier score (calibracion): 0.0517
+  Folds evaluados: 27
+  Paciente mas dificil: 20266247G-97 (AUC=0.7478)
+  Parametros entrenables: 831,621
+  Detalle completo (por paciente): ver LOPO/latefusion_meta_clasificador/lopo_metricas_por_paciente.csv
+
+Late Fusion — Voto Mayoritario
+--------------------------------------------------------------------------------------------
+  AUC global (todas las predicciones concatenadas): 0.9529
+  AUC promedio por fold: 0.8484 (STD: 0.3102)
+  PR-AUC: 0.9486  |  Balanced Accuracy: 0.9314  |  MCC: 0.8585
+  Brier score (calibracion): 0.0604
+  Folds evaluados: 27
+  Paciente mas dificil: SHSHUG037-1 (AUC=0.6909)
+  Parametros entrenables: 831,621
+  Detalle completo (por paciente): ver LOPO/latefusion_voto_mayoritario/lopo_metricas_por_paciente.csv
+
+Híbrido (Early Fusion)
+--------------------------------------------------------------------------------------------
+  AUC global (todas las predicciones concatenadas): 0.9374
+  AUC promedio por fold: 0.8531 (STD: 0.3164)
+  PR-AUC: 0.9407  |  Balanced Accuracy: 0.9051  |  MCC: 0.8062
+  Brier score (calibracion): 0.0898
+  Folds evaluados: 27
+  Paciente mas dificil: 20266247G-97 (AUC=0.6086)
+  Parametros entrenables: 649,907
+  Detalle completo (por paciente): ver LOPO/hibrido/lopo_metricas_por_paciente.csv

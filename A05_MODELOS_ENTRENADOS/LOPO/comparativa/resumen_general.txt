@@ -1,0 +1,29 @@
+RESUMEN GENERAL — COMPARATIVA DE MODELOS (LOPO)
+Fecha: 2026-08-01 03:21
+============================================================================================
+
+Modelo                               AUC  PR-AUC  BalAcc     MCC     Params
+--------------------------------------------------------------------------------------------
+FFT (solo)                        0.9813  0.9827  0.9461  0.8891    245,443
+Late Fusion — Media Geométrica    0.9781  0.9785  0.9313  0.8578    831,621
+Late Fusion — Meta-Clasificador   0.9774  0.9676  0.9290  0.8546    831,621
+Late Fusion — Voto Mayoritario    0.9529  0.9486  0.9314  0.8585    831,621
+Híbrido (Early Fusion)            0.9374  0.9407  0.9051  0.8062    649,907
+
+Mejor AUC global: FFT (solo) (0.9813)
+Modelo mas ligero: FFT (solo) (245,443 parametros, AUC=0.9813)
+
+Consistencia entre pacientes (menor STD = mas parejo, menos riesgo de
+fallar sorpresivamente en un paciente nuevo):
+  Late Fusion — Voto Mayoritario   STD=0.3102
+  Late Fusion — Media Geométrica   STD=0.3126
+  Late Fusion — Meta-Clasificador  STD=0.3128
+  FFT (solo)                       STD=0.3151
+  Híbrido (Early Fusion)           STD=0.3164
+
+Peor paciente por modelo (el mas dificil de clasificar en cada esquema):
+  FFT (solo)                       -> 20266247G-97 (AUC=0.6168)
+  Late Fusion — Media Geométrica   -> 20266247G-97 (AUC=0.7447)
+  Late Fusion — Meta-Clasificador  -> 20266247G-97 (AUC=0.7478)
+  Late Fusion — Voto Mayoritario   -> SHSHUG037-1 (AUC=0.6909)
+  Híbrido (Early Fusion)           -> 20266247G-97 (AUC=0.6086)
