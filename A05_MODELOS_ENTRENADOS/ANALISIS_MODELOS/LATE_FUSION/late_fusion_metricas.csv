@@ -1,0 +1,6 @@
+Metodo,AUC,Sensibilidad,Especificidad,FPR,Brier,TN,FP,FN,TP
+Transformer (solo),1.0,1.0,1.0,0.0,6.283251423155889e-05,34,0,0,220
+FFT (solo),1.0,1.0,1.0,0.0,0.000946941610891372,34,0,0,220
+Media_Geometrica,1.0,1.0,1.0,0.0,2.972441563997563e-07,34,0,0,220
+Voto_Mayoritario,1.0,1.0,1.0,0.0,0.0,34,0,0,220
+Meta_Clasificador,1.0,1.0,1.0,0.0,0.0023038042850214114,34,0,0,220

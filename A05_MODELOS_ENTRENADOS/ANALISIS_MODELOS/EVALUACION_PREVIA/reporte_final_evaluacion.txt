@@ -1,0 +1,11 @@
+REPORTE OPERACIONAL DE INFERENCIA BIOMEDICA (EVALUACION SUPERFICIAL)
+
+===============================================================================================
+RESULTADOS FINALES (TEST INDEPENDIENTE) — ADVERTENCIA: metrica
+secundaria/no representativa (test = 1 solo paciente). La metrica
+principal de referencia es LOPO (carpeta LOPO/comparativa/).
+===============================================================================================
+TRANSFORMER  | AUC=1.0000 | Sens=100.00% | Spec=100.00% | FPR=0.00% | BalAcc=1.0000 | MCC=1.0000 | Brier=0.0001 | Int=-0.490 | Pend=2.287
+FFT          | AUC=1.0000 | Sens=100.00% | Spec=100.00% | FPR=0.00% | BalAcc=1.0000 | MCC=1.0000 | Brier=0.0009 | Int=-4.108 | Pend=1.809
+HIBRIDO      | AUC=1.0000 | Sens=100.00% | Spec=100.00% | FPR=0.00% | BalAcc=1.0000 | MCC=1.0000 | Brier=0.0000 | Int=0.046 | Pend=0.999
+===============================================================================================
