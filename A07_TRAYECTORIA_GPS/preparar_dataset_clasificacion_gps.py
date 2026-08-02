@@ -8,7 +8,7 @@ Cambio de enfoque respecto a la version anterior de A07, siguiendo la
 recomendacion del director del TFM: el GPS es una fuente de observacion
 discreta, irregular y de baja frecuencia -- no debe tratarse como una
 señal densa comparable a IMU/presion, ni usarse simultaneamente como
-entrada Y como target del mismo problema (fuga de informacion). Aqui el
+entrada Y como target del mismo problema (fuga de informacion)w. Aqui el
 GPS entra UNICAMENTE como rama de entrada auxiliar para clasificacion
 (objetivo = marcha/reposo, tomado de la columna mov_type del Excel de
 segmentos), nunca como variable a predecir.
