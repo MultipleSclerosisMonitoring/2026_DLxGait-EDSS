@@ -205,9 +205,30 @@ def construir_rama_gps_discreta(df: pd.DataFrame) -> pd.DataFrame:
     t_absolutos = (df.index - df.index[0]).total_seconds().values
     df["gps_delta_t"] = t_absolutos
 
-    lat_cambio = df["lat"].ne(df["lat"].shift(1))
-    lng_cambio = df["lng"].ne(df["lng"].shift(1))
-    mask_no_nulos = df["lat"].notna() & df["lng"].notna()
+    lat_num = pd.to_numeric(df["lat"], errors="coerce")
+    lng_num = pd.to_numeric(df["lng"], errors="coerce")
+
+    lat_cambio = lat_num.ne(lat_num.shift(1))
+    lng_cambio = lng_num.ne(lng_num.shift(1))
+
+    # FILTRAR (0, 0) COMO LECTURA INVALIDA: muchos receptores GPS/GNSS
+    # reportan lat=0, lng=0 antes de obtener su primer "fix" satelital
+    # real (o durante una perdida temporal de senal). (0,0) cae en el
+    # Golfo de Guinea, a miles de km de cualquier sesion real de este
+    # proyecto -- tratarlo como lectura real introduce un salto de
+    # posicion absurdo (varios cientos de miles de km) que arruina
+    # cualquier calculo de distancia/velocidad. Se excluye explicitamente
+    # de mask_no_nulos, ademas del filtro de NaN ya existente.
+    #
+    # IMPORTANTE: lat/lng pueden llegar como texto (str) desde InfluxDB
+    # (confirmado empiricamente: '0' en vez de 0.0), en cuyo caso una
+    # comparacion directa df["lat"] == 0 NUNCA es True (compara str
+    # contra int) y el filtro queda inerte en silencio. Se convierte
+    # explicitamente a numerico con pd.to_numeric ANTES de comparar.
+    mask_no_nulos = (
+        lat_num.notna() & lng_num.notna()
+        & ~((lat_num == 0) & (lng_num == 0))
+    )
     mascara_real = (mask_no_nulos & (lat_cambio | lng_cambio)).values
 
     df["gps_mascara"] = mascara_real.astype(np.float32)
