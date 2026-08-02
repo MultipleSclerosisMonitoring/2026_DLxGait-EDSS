@@ -19,13 +19,15 @@ dependencies = [
     "pydantic",
     "h5py",
     "matplotlib",
-    "scikit-learn==1.7.2",
+    "scikit-learn==1.8",
     "pytest",
     "imageio",
     "seaborn",
     "openpyxl",
     "ahrs",
-    "pyarrow"
+    "pyarrow",
+    "pyproj",
+    "reportlab",
 ]
 
 [tool.setuptools.packages.find]
