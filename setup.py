@@ -28,6 +28,8 @@ setup(
         "imageio",
         "seaborn",
         "pytest",
+        "pyproj",
+        "reportlab",
         "pyarrow"
     ]
 )
