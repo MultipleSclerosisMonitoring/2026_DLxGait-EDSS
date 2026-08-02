@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Orquestador biomecanico bilateral -- VERSION TEMPORAL (recortes de A06).
+Orquestador biomecanico bilateral -- VERSION TEMPORAL (recorte de A06).
 
 Conecta EventDetector y KinematicEngine (version recortada, sin
 reconstruccion espacial) para calcular metricas de marcha TEMPORALES
