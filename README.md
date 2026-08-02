@@ -1,4 +1,4 @@
-# ESTIMACIÓN DE DETERIORO EN ESCLEROSIS MÚLTIPLE
+# ANÁLISIS DE LA MARCHA PARA ESTIMACIÓN DE DETERIORO EN ESCLEROSIS MÚLTIPLE
 
 ## Análisis biomecánico mediante calcetines inteligentes (SCKS)
 
@@ -32,7 +32,7 @@ El sistema se organiza en cuatro bloques:
    como rama discreta de entrada (no como target de trayectoria densa),
    fusionada con la rama IMU/presión mediante cross-attention, para mejorar la
    clasificación marcha/reposo. Incluye además un cálculo exploratorio de
-   velocidad promedio de sesión vía GPS. Ver README propio de esa carpeta.
+   velocidad promedio de sesión vía GPS.
 4. **Informe consolidado** (`generar_informe_conjunto.py`) — combina los
    resultados de los 3 pipelines anteriores (Agnostic, A06, A07) para un mismo
    paciente/sesión en un único PDF corto con métricas y gráficas.
@@ -350,19 +350,12 @@ A04_TRANSFORMER/
 
 ### Objetivo actual (rediseñado)
 
-Este bloque investigó originalmente usar GPS+presión con fine-tuning de
-GaitTransformer para predecir **trayectoria** (posición X,Y) como alternativa
-al motor de A06. **Esa versión fue descartada por no viable** (error de
-trayectoria de 20-60 metros; el GPS de los calcetines tiene lecturas reales
-espaciadas entre 7 y 80 segundos, muy lejos de la frecuencia necesaria para
-trayectoria fina).
-
-El bloque fue **rediseñado por completo** siguiendo la recomendación del
-director del TFM: el GPS debe tratarse como una fuente de observación
-**discreta e irregular**, no como target denso interpolado. El nuevo objetivo
-es **clasificación** marcha/reposo (la misma tarea de A04), usando GPS como
-**rama de entrada auxiliar** fusionada con la rama IMU/presión mediante
-cross-attention — nunca como variable a predecir (evitar fuga de información).
+Este bloque **fue rediseñado por completo** respecto a su versión original.
+El objetivo ya no es predecir trayectoria (posición X, Y) del cuerpo, sino
+**clasificación** marcha/reposo — la misma tarea de A04 — usando el GPS de los
+calcetines como **rama de entrada auxiliar**, fusionada con la rama IMU/presión
+mediante cross-attention (`nn.MultiheadAttention`), para intentar mejorar el
+AUC de clasificación respecto a usar solo IMU/presión.
 
 Adicionalmente, se implementó un cálculo exploratorio de **velocidad promedio
 de sesión** vía GPS (distancia recorrida real, sumando tramos entre lecturas
@@ -371,17 +364,82 @@ ida y vuelta) y un análisis de fatiga sobre esa velocidad, ambos documentados
 como indicadores gruesos, no como sustituto de las métricas biomecánicas finas
 de A06.
 
+### Historial: por qué se descartó el enfoque original (trayectoria)
+
+La primera versión de este bloque investigaba una propuesta del director del
+TFM: usar presión + GPS, junto con fine-tuning de la arquitectura
+`GaitTransformer` de A04, para predecir la **trayectoria** (posición X, Y)
+como alternativa al motor Madgwick+ZUPT de A06.
+
+**Conclusión de esa investigación: no viable con los datos actuales.**
+
+- **Causa raíz**: el GPS de los calcetines es la única fuente de posición
+  disponible (confirmado mediante inventario exhaustivo de todos los `_field`
+  y tags de InfluxDB — no existe UWB, RTK ni ningún otro sensor de
+  posicionamiento), con lecturas reales espaciadas entre **7 y 80 segundos**
+  entre sí. Esto es varios órdenes de magnitud más disperso que la frecuencia
+  (~10-25 Hz) necesaria para generar una trayectoria fina fiable.
+- **Resultado**: el error final de predicción de trayectoria se mantuvo en el
+  orden de **20-60 metros** según la variante probada (normalización por
+  sesión, predicción de desplazamiento relativo, distintos learning rates),
+  muy lejos de ser utilizable para calcular parámetros clínicos de marcha.
+- **Problema metodológico adicional identificado**: el enfoque original
+  generaba un "ground truth" denso interpolando (PCHIP) entre las lecturas GPS
+  reales dispersas, y entrenaba el modelo contra esa curva interpolada — es
+  decir, el modelo aprendía a imitar una **suposición matemática**, no el
+  movimiento real del paciente entre lecturas.
+
+**Decisión**: se descartó la reconstrucción de trayectoria vía GPS+Transformer
+por completo. Los scripts de esa versión
+(`preparar_dataset_trayectoria.py`, `conector_trayectoria.py`,
+`trajectory_model.py`, `entrenar_trajectory_model.py`,
+`entrenar_trajectory_model_multi.py`, `analizar_segmento_trayectoria.py`) **ya
+no existen en el repositorio**. Se mantiene A06 (detección de eventos +
+métricas temporales) como fuente principal de biomarcadores de marcha del
+proyecto.
+
+### Rediseño: GPS como rama discreta (no como target denso)
+
+Siguiendo la recomendación del director del TFM tras evaluar la investigación
+anterior, el GPS se trata ahora como lo que realmente es: una fuente de
+observación **discreta, irregular y de baja frecuencia**, no una señal densa
+comparable a IMU/presión, y **nunca** se usa simultáneamente como entrada y
+como variable a predecir del mismo problema (evitar fuga de información).
+
+Principios de diseño:
+
+- **IMU/presión**: rama densa, tensor PSD combinado (mismo esquema que A04,
+  348 dimensiones), sin cambios respecto al pipeline de clasificación.
+- **GPS**: rama discreta — para cada frame de la rama densa, se registra
+  `delta_t` (tiempo transcurrido), `x`/`y` (posición proyectada a metros UTM,
+  forward-filled desde la última lectura real) y una **máscara de
+  observación** (1.0 si ese frame coincide con una lectura GPS real, 0.0 si es
+  relleno). No se interpola ninguna curva entre lecturas reales: el "hueco"
+  entre lecturas queda representado por la máscara en 0, dejando que el modelo
+  decida cuánto confiar en la posición, no una suposición matemática externa.
+- **Fusión**: cross-attention (`nn.MultiheadAttention`) entre los embeddings
+  por paso de la rama IMU/presión (query) y la rama GPS (key, value).
+- **Objetivo**: clasificación marcha/reposo (etiqueta tomada de la columna
+  `mov_type` del Excel de segmentos), nunca predicción de posición.
+
+**Advertencia sobre desplazamiento incremental**: si se calcula distancia
+recorrida a partir de las coordenadas GPS, debe sumarse el desplazamiento
+entre **cada par de lecturas reales consecutivas**, no la distancia neta entre
+el primer y el último punto. Un paciente que recorre un pasillo de ida y
+vuelta puede terminar en (casi) la misma posición de inicio (distancia neta ≈
+0) pese a haber recorrido el doble de la longitud del pasillo. Esta corrección
+está implementada en `calcular_distancia_recorrida_real`.
+
 ### Contenido de la carpeta
 
 | Archivo | Rol |
 |---|---|
-| `preparar_dataset_clasificacion_gps.py` | Extrae presión+IMU+GPS de InfluxDB; construye la rama GPS discreta (`gps_delta_t`, `gps_x_m`, `gps_y_m`, `gps_mascara`), sin interpolar entre lecturas reales; incluye `calcular_velocidad_promedio_sesion` y `calcular_fatiga_por_tramos` |
-| `modelo_gps_clasificacion.py` | Arquitectura de 2 ramas (IMU/presión vía GaitTransformer + rama GPS discreta) fusionadas con cross-attention (`nn.MultiheadAttention`); conector, entrenamiento LOPO y evaluación, todo en un único script |
-| `analizar_velocidad_gps_paciente.py` | Calcula velocidad promedio de sesión para un paciente/segmento específico, guarda resultado por paciente (complementa el LOPO agregado, que no reporta por paciente) |
-| `segmentos_A07_v2.xlsx` | Tabla de segmentos (`Reference`, `datefrom`, `dateuntil`, `mov_type`, `es_utc`) usada para construir el dataset de entrenamiento |
-| `verificar_gps_por_pie.py` | Herramienta de diagnóstico: confirma que el GPS es compartido entre pies, no independiente |
+| `preparar_dataset_clasificacion_gps.py` | Extrae presión+IMU+GPS de InfluxDB (`extraer_datos_crudos`); construye la rama GPS discreta (`construir_rama_gps_discreta`); lee la tabla de segmentos desde Excel (`cargar_segmentos_desde_excel`); calcula velocidad de sesión (`calcular_velocidad_promedio_sesion`, `calcular_distancia_recorrida_real`) y fatiga exploratoria (`calcular_fatiga_por_tramos`) |
+| `modelo_gps_clasificacion.py` | Conector (arma el tensor PSD + secuencia GPS alineados), arquitectura de 2 ramas con cross-attention (`ModeloClasificacionGPS`, `EncoderGPS`), y entrenamiento/evaluación LOPO real, todo en un único script |
+| `analizar_velocidad_gps_paciente.py` | Calcula velocidad promedio de sesión para un paciente/segmento específico, guarda resultado individual (el LOPO de `modelo_gps_clasificacion.py` no reporta por paciente) |
+| `segmentos_A07_v2.xlsx` | Tabla de segmentos (`Reference`, `datefrom`, `dateuntil`, `mov_type`, `es_utc`) usada para construir el dataset de entrenamiento. Editable directamente sin tocar código |
+| `verificar_gps_por_pie.py` | Herramienta de diagnóstico: confirma que el GPS es compartido entre pies (un solo GPS por dispositivo, no independiente por pie) |
 | `inventario_influxdb.py` | Herramienta de diagnóstico: lista todos los `_field`/tags de InfluxDB, usada para confirmar que no existe otra fuente de posicionamiento (UWB/RTK) |
-| `README_A07.md` | Detalle completo de la metodología, decisiones y resultados de este bloque |
 
 ### Cómo ejecutar
 
@@ -391,7 +449,15 @@ python A07_TRAYECTORIA_GPS/modelo_gps_clasificacion.py \
     --config-yaml A01_EXTRACCION_DATOS/config.yaml \
     --excel A07_TRAYECTORIA_GPS/segmentos_A07_v2.xlsx \
     --models-dir A05_MODELOS_ENTRENADOS
+```
 
+Reentrena el modelo completo (rama IMU/presión inicializada con los pesos de
+`modelo_transformer.pth` de A04, rama GPS desde cero) en cada fold
+Leave-One-Patient-Out. **Advertencia de tiempo**: con ~24-30 pacientes y varios
+segmentos por paciente, esto puede tardar varias horas. Resultado:
+`RESULTADOS_CLASIFICACION_GPS/lopo_clasificacion_gps.csv`.
+
+```bash
 # Calcular velocidad de sesion para un paciente/segmento especifico
 python A07_TRAYECTORIA_GPS/analizar_velocidad_gps_paciente.py \
     --paciente CODIGO_PACIENTE \
@@ -400,15 +466,37 @@ python A07_TRAYECTORIA_GPS/analizar_velocidad_gps_paciente.py \
     --config-yaml A01_EXTRACCION_DATOS/config.yaml
 ```
 
-Resultados: `RESULTADOS_CLASIFICACION_GPS/` (LOPO del modelo de clasificación)
-y `RESULTADOS_VELOCIDAD_GPS/` (velocidad por paciente).
+Resultado: `RESULTADOS_VELOCIDAD_GPS/{paciente}_velocidad_gps.csv`, con
+`distancia_m`, `duracion_s`, `velocidad_ms` (NaN si hay menos de 2 lecturas GPS
+reales en el segmento) y `n_lecturas_gps_reales`.
+
+**Advertencia metodológica**: esta velocidad es un promedio grueso de
+desplazamiento de toda la sesión, no velocidad de marcha instantánea ni
+sustituto de longitud de zancada/MTC — esas métricas requieren resolución de
+centímetros, incompatible con la frecuencia real del GPS disponible.
+
+### Bug conocido y corregido — lat/lng como texto desde InfluxDB
+
+Durante la validación de este bloque se detectó que InfluxDB puede devolver
+`lat`/`lng` como **texto** (`'0'`) en vez de numérico (`0.0`). Muchos
+receptores GPS/GNSS reportan `lat=0, lng=0` antes de obtener su primer "fix"
+satelital real; sin conversión explícita a numérico, una comparación directa
+(`df["lat"] == 0`) nunca es `True` (compara string contra entero) y ese punto
+espurio se trataba como una lectura real, introduciendo saltos de posición de
+cientos de miles de kilómetros en los cálculos de distancia/velocidad.
+
+**Corregido** en `construir_rama_gps_discreta` (conversión explícita con
+`pd.to_numeric(..., errors="coerce")` antes de cualquier comparación, y
+exclusión explícita de `(0, 0)` del conjunto de lecturas reales). Auditado
+sobre los segmentos de entrenamiento reales: el bug no afectó ningún resultado
+de LOPO ya reportado (0 de 78 segmentos auditados tenían el origen
+contaminado por este problema).
 
 ### Estructura de archivos
 
 ```
 A07_TRAYECTORIA_GPS/
 ├── __init__.py
-├── README_A07.md
 ├── preparar_dataset_clasificacion_gps.py
 ├── modelo_gps_clasificacion.py
 ├── analizar_velocidad_gps_paciente.py
