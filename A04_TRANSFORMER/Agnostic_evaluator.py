@@ -11,8 +11,10 @@ fechas), sin necesidad de mantener scripts separados por modelo:
     4. Hibrido Late Fusion (Media Geometrica) -> combina FFT + Transformer
        por separado, sin .pth adicional (la combinacion es una formula,
        no un modelo entrenado) -- se eligio Media Geometrica por ser la
-       variante de Late Fusion con mejor AUC en LOPO real (0.9002),
-       superando a Voto Mayoritario (0.8651) y Meta-Clasificador (0.8918).
+       variante de Late Fusion con mejor AUC global en LOPO real (0.9781),
+       superando a Meta-Clasificador (0.9774) y Voto Mayoritario (0.9529).
+       Cifras del LOPO mas reciente (27 pacientes); ver
+       A05_MODELOS_ENTRENADOS/LOPO/comparativa/resumen_general.txt.
 
 Todos los modos comparten la misma extraccion de features (presion+IMU
 de ambos pies -> PSD combinado "Both" de 348 dimensiones, mismo esquema
