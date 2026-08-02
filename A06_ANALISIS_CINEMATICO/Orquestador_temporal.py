@@ -20,7 +20,7 @@ import argparse
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -46,11 +46,13 @@ class PipelineConfig(BaseModel):
     fin: datetime = Field(..., description="Fecha fin")
     config_yaml_path: Path = Field(..., description="Ruta config InfluxDB")
     fs: int = Field(default=100, gt=0)
-    output_dir: Path = Field(
-        default=Path(
-            r"C:\Users\jairi\OneDrive\Escritorio\01TFMCLONULTIMO"
-            r"\A06_ANALISIS_CINEMATICO\RESULTADOS_TEMPORALES"
-        )
+    output_dir: Optional[Path] = Field(
+        default=None,
+        description="Carpeta de salida. Si no se especifica, se calcula "
+                     "relativa a la ubicacion del propio script (PROJECT_ROOT/"
+                     "A06_ANALISIS_CINEMATICO/RESULTADOS_TEMPORALES), no una "
+                     "ruta absoluta fija -- para que el script sea portable "
+                     "entre distintos clones del repositorio."
     )
     max_time_diff_s: float = Field(default=0.20, gt=0.0)
     umbral_hueco_seg: float = Field(default=2.0, gt=0.0)
@@ -62,6 +64,13 @@ class BilateralPipelineTemporal:
     def __init__(self, config: PipelineConfig) -> None:
         """Inicializa el orquestador y los motores de calculo."""
         self.config = config
+
+        # RESOLVER output_dir DE FORMA PORTABLE: si no se especifico
+        # explicitamente (None), se calcula relativo a PROJECT_ROOT (la
+        # ubicacion real del propio script en el clon actual), en vez de
+        # depender de una ruta absoluta fija que rompe en otros clones.
+        if self.config.output_dir is None:
+            self.config.output_dir = PROJECT_ROOT / "A06_ANALISIS_CINEMATICO" / "RESULTADOS_TEMPORALES"
 
         config_eventos = EventDetectorConfig(
             fs=self.config.fs,
@@ -247,12 +256,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fs", type=int, default=100)
     parser.add_argument("--config-yaml", type=str, default=None)
     parser.add_argument("--max-time-diff", type=float, default=0.20)
+    parser.add_argument(
+        "--output-dir", type=str, default=None,
+        help="Carpeta de salida. Si se omite, se usa PROJECT_ROOT/A06_ANALISIS_CINEMATICO/"
+             "RESULTADOS_TEMPORALES (relativa al clon actual, no una ruta fija)."
+    )
     return parser.parse_args()
 
 
 def construir_config(args: argparse.Namespace) -> PipelineConfig:
     """Valida argumentos y emite config."""
     cfg_path = Path(args.config_yaml) if args.config_yaml else PROJECT_ROOT / "A01_EXTRACCION_DATOS" / "config.yaml"
+    out_dir = Path(args.output_dir) if args.output_dir else None
     return PipelineConfig(
         paciente=args.paciente,
         inicio=datetime.strptime(args.inicio, "%Y-%m-%d %H:%M:%S"),
@@ -260,6 +275,7 @@ def construir_config(args: argparse.Namespace) -> PipelineConfig:
         config_yaml_path=cfg_path,
         fs=args.fs,
         max_time_diff_s=args.max_time_diff,
+        output_dir=out_dir,
     )
 
 
