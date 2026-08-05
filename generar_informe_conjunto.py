@@ -17,6 +17,7 @@ from datetime import date
 from typing import Optional, Dict, Tuple
 
 import pandas as pd
+import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -77,14 +78,80 @@ def verificar_pipelines_completos(
 
 
 def _grafica_probabilidad_agnostic(df_agnostic: pd.DataFrame, out_path: Path) -> None:
-    """Genera la grafica de linea temporal de probabilidad de marcha (Agnostic)."""
+    """
+    Genera la grafica de linea temporal de probabilidad de marcha
+    (Agnostic), con el fondo pintado de amarillo en los tramos donde la
+    prediccion final es marcha (pred_final_smoothed == 1).
+    """
+    import matplotlib.dates as mdates
+
     fig, ax = plt.subplots(figsize=(7, 3))
-    ax.plot(pd.to_datetime(df_agnostic["timestamp"]), df_agnostic["prob_smoothed"], linewidth=1)
-    ax.axhline(0.5, color="grey", linestyle="--", linewidth=0.8)
+
+    tiempos = pd.to_datetime(df_agnostic["timestamp"]).reset_index(drop=True)
+    predicciones = df_agnostic["pred_final_smoothed"].reset_index(drop=True)
+
+    # PINTAR TRAMOS DE MARCHA: agrupar filas consecutivas con
+    # pred_final_smoothed == 1 en un unico rectangulo por tramo (mas
+    # eficiente y visualmente mas limpio que pintar fila por fila).
+    es_marcha = (predicciones == 1).values
+    cambios = np.where(np.diff(es_marcha.astype(int)) != 0)[0] + 1
+    limites = np.concatenate(([0], cambios, [len(es_marcha)]))
+
+    for i in range(len(limites) - 1):
+        inicio_idx, fin_idx = limites[i], limites[i + 1] - 1
+        if es_marcha[inicio_idx]:
+            ax.axvspan(tiempos.iloc[inicio_idx], tiempos.iloc[fin_idx], color="gold", alpha=0.35, linewidth=0)
+
+    ax.plot(tiempos, df_agnostic["prob_smoothed"], linewidth=1, color="tab:blue", label="Probabilidad", zorder=3)
+    ax.axhline(0.5, color="grey", linestyle="--", linewidth=0.8, label="Umbral 0.50", zorder=2)
     ax.set_ylabel("Prob. marcha")
     ax.set_xlabel("Tiempo")
     ax.set_title("Probabilidad de marcha en el tiempo (Agnostic)")
     ax.set_ylim(0, 1)
+    # ELIMINAR MARGEN FANTASMA: sin esto, matplotlib deja un espacio en
+    # blanco antes del primer dato y despues del ultimo, que visualmente
+    # se confunde con "reposo" (sin linea azul ni pintado amarillo) aunque
+    # no representa ningun dato real.
+    ax.set_xlim(tiempos.iloc[0], tiempos.iloc[-1])
+
+    # LEYENDA: se agrega manualmente un "parche" para el area amarilla de
+    # marcha, ya que axvspan no aparece en la leyenda por defecto.
+    from matplotlib.patches import Patch
+    handles_leyenda, labels_leyenda = ax.get_legend_handles_labels()
+    handles_leyenda.append(Patch(facecolor="gold", alpha=0.35, label="Marcha (predicha)"))
+    ax.legend(handles=handles_leyenda, fontsize=7)
+
+    # TICKS DEL EJE X: al menos 10 marcas sin importar la duracion real
+    # del rango (desde segundos hasta horas). Se elige el intervalo
+    # "redondo" mas cercano a duracion_total/10 de una lista de opciones
+    # sensatas para lectura humana, y las marcas se alinean a multiplos
+    # exactos de ese intervalo desde la medianoche (no al primer dato),
+    # para que caigan en horas "redondas" (ej. 14:45:00, no 14:44:12).
+    # Formato HH:MM:SS, sin el prefijo de dia que antepone matplotlib
+    # por defecto para rangos que caben en un solo dia.
+    duracion_total_seg = (tiempos.iloc[-1] - tiempos.iloc[0]).total_seconds()
+    n_etiquetas_objetivo = 10
+    intervalo_ideal_seg = max(duracion_total_seg / n_etiquetas_objetivo, 0.001)
+
+    opciones_intervalo_seg = [
+        1, 2, 5, 10, 15, 30,
+        60, 120, 150, 300, 600, 900, 1800,
+        3600, 7200
+    ]
+    intervalo_elegido_seg = min(opciones_intervalo_seg, key=lambda x: abs(x - intervalo_ideal_seg))
+
+    inicio_dia = tiempos.iloc[0].normalize()
+    primer_offset = np.ceil((tiempos.iloc[0] - inicio_dia).total_seconds() / intervalo_elegido_seg) * intervalo_elegido_seg
+    primer_tick = inicio_dia + pd.Timedelta(seconds=primer_offset)
+
+    ticks_manuales = pd.date_range(
+        start=primer_tick, end=tiempos.iloc[-1], freq=pd.Timedelta(seconds=intervalo_elegido_seg)
+    )
+    if len(ticks_manuales) >= 2:
+        ax.set_xticks(ticks_manuales)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=8)
+
     fig.tight_layout()
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
@@ -175,21 +242,27 @@ def generar_informe_conjunto(
     # CONSTRUCCION DEL PDF
     # -------------------------------------------------------------------
     styles = getSampleStyleSheet()
-    titulo_style = ParagraphStyle("TituloInforme", parent=styles["Title"], fontSize=16, spaceAfter=4)
-    subtitulo_style = ParagraphStyle("Subtitulo", parent=styles["Normal"], fontSize=10, textColor=colors.grey, spaceAfter=12)
-    h2_style = ParagraphStyle("H2", parent=styles["Heading2"], fontSize=13, spaceBefore=14, spaceAfter=6)
-    body_style = ParagraphStyle("Body", parent=styles["Normal"], fontSize=10, leading=14)
+    titulo_style = ParagraphStyle("TituloInforme", parent=styles["Title"], fontSize=14, spaceAfter=4)
+    subtitulo_style = ParagraphStyle("Subtitulo", parent=styles["Normal"], fontSize=9, textColor=colors.grey, spaceAfter=12)
+    h2_style = ParagraphStyle("H2", parent=styles["Heading2"], fontSize=12, spaceBefore=14, spaceAfter=6)
+    body_style = ParagraphStyle("Body", parent=styles["Normal"], fontSize=9, leading=13)
 
     doc = SimpleDocTemplate(
         str(output_pdf), pagesize=LETTER,
-        topMargin=2 * cm, bottomMargin=2 * cm, leftMargin=2 * cm, rightMargin=2 * cm
+        topMargin=1 * cm, bottomMargin=1 * cm, leftMargin=1 * cm, rightMargin=1 * cm
     )
     elementos = []
 
     elementos.append(Paragraph(f"Informe Consolidado — {paciente}", titulo_style))
+
+    inicio_prueba = pd.to_datetime(df_agnostic["timestamp"]).min()
+    fin_prueba = pd.to_datetime(df_agnostic["timestamp"]).max()
+    rango_prueba_str = f"{inicio_prueba.strftime('%Y-%m-%d %H:%M:%S')} — {fin_prueba.strftime('%H:%M:%S')}"
+
     elementos.append(Paragraph(
         f"Fecha de generación: {date.today().isoformat()} &nbsp;|&nbsp; "
-        f"Pipelines: Clasificación (Agnostic), Biomecánica temporal (A06), Velocidad GPS (A07)",
+        f"Pipelines: Clasificación (Agnostic), Biomecánica temporal (A06), Velocidad GPS (A07)"
+        f"<br/>Paciente: {paciente} &nbsp;|&nbsp; Prueba: {rango_prueba_str}",
         subtitulo_style
     ))
 
@@ -214,7 +287,7 @@ def generar_informe_conjunto(
         ListItem(Paragraph(f"Duración media de zancada: {stride_time_medio:.3f} s", body_style)),
         ListItem(Paragraph(f"Asimetría media (zancada): {asimetria_media:.1f}%", body_style)),
     ], bulletType="bullet"))
-    elementos.append(Image(str(ruta_grafica_a06), width=14 * cm, height=8 * cm))
+    elementos.append(Image(str(ruta_grafica_a06), width=10.5 * cm, height=6 * cm))
 
     elementos.append(Paragraph("3. Velocidad de desplazamiento (A07, vía GPS)", h2_style))
     elementos.append(Paragraph(
