@@ -72,14 +72,14 @@ class GaitDatasetLoader:
 
     def get_train_test_data(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
-        Partición LOPO: el último paciente único es test,
+        Partición: el último paciente único es test,
         el penúltimo es val, el resto train.
         Los índices se guardan en disco.
         """
         x_raw, groups, labels = self._load_data()
         unique_patients = np.unique(groups)
 
-        # LOPO: reservar ultimo paciente como test
+        # reservar ultimo paciente como test
         test_patient  = unique_patients[-1]
         val_patient   = unique_patients[-2]
 
@@ -110,7 +110,7 @@ class GaitDatasetLoader:
         with open(self.config.output_dir / "particion_pacientes.json", "w", encoding="utf-8") as f:
             json.dump(info_particion, f, indent=4, ensure_ascii=False)
 
-        logger.info(f"LOPO TEST={test_patient} VAL={val_patient} TRAIN={len(unique_patients)-2} pacientes")
+        logger.info(f" TEST={test_patient} VAL={val_patient} TRAIN={len(unique_patients)-2} pacientes")
         logger.info(f"TRAIN={len(train_idx)} VAL={len(val_idx)} TEST={len(test_idx)}")
 
         x_train_raw = x_raw[train_idx]
