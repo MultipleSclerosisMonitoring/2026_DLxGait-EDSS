@@ -266,8 +266,7 @@ class GaitHybridModel(nn.Module):
     temporal desde cero junto con la rama FFT -- solo aprende la rama
     FFT y el cabezal de fusion final, reutilizando el Transformer ya
     optimizado como extractor de features fijo. Esto reduce riesgo de
-    sobreajuste y acelera el entrenamiento, pero significa que el
-    Hibrido es menos "conjunto" de lo que su nombre sugiere: no hay
+    sobreajuste y acelera el entrenamiento, por ende no hay
     coadaptacion entre ambas ramas durante el entrenamiento, solo fusion
     de una rama fija (Transformer) con una rama entrenable (FFT).
     """
