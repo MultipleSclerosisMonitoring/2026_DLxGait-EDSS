@@ -53,12 +53,16 @@ MODELOS_DISPONIBLES = {
     "2": "transformer",
     "3": "hibrido_early",
     "4": "hibrido_late",
+    "5": "hibrido_late_voto",
+    "6": "hibrido_late_meta",
 }
 NOMBRES_LEGIBLES = {
     "fft": "FFT",
     "transformer": "Transformer",
     "hibrido_early": "Hibrido Early Fusion",
     "hibrido_late": "Hibrido Late Fusion (Media Geometrica)",
+    "hibrido_late_voto": "Hibrido Late Fusion (Voto Mayoritario)",
+    "hibrido_late_meta": "Hibrido Late Fusion (Meta-Clasificador)",
 }
 class AgnosticEvaluatorUnificado:
     """Motor de inferencia continua que soporta los 4 modos de modelo."""
@@ -119,6 +123,27 @@ class AgnosticEvaluatorUnificado:
             )
             self.model_hybrid.eval()
             logger.info("MODELO CARGADO: modelo_hibrido.pth")
+        if self.modelo in ("hibrido_late_voto", "hibrido_late_meta"):
+            if not hasattr(self, "model_time"):
+                self.model_time = GaitTransformer(self.t_cfg).to(self.device)
+                self.model_time.load_state_dict(
+                    torch.load(self.model_dir / "modelo_transformer.pth", map_location=self.device)
+                )
+                self.model_time.eval()
+                logger.info("MODELO CARGADO: modelo_transformer.pth")
+            if not hasattr(self, "model_fft"):
+                self.model_fft = FFTModel(fft_dim).to(self.device)
+                self.model_fft.load_state_dict(
+                    torch.load(self.model_dir / "modelo_fft.pth", map_location=self.device)
+                )
+                self.model_fft.eval()
+                logger.info("MODELO CARGADO: modelo_fft.pth")
+        if self.modelo == "hibrido_late_meta":
+            meta_path = self.model_dir / "ANALISIS_MODELOS" / "LATE_FUSION" / "meta_clasificador_late_fusion.joblib"
+            if not meta_path.exists():
+                raise FileNotFoundError(f"Meta-clasificador no encontrado en: {meta_path}")
+            self.meta_clf = joblib.load(meta_path)
+            logger.info(f"META-CLASIFICADOR CARGADO: {meta_path.name}")
 
     def fetch_and_align_stream(self, reference: str, start: datetime, end: datetime) -> Dict[str, pd.DataFrame]:
         """
@@ -320,7 +345,7 @@ class AgnosticEvaluatorUnificado:
             x_time_np = np.expand_dims(flat_scaled, axis=0).astype(np.float32)
             x_time_tensor = torch.from_numpy(x_time_np).to(self.device)
             x_fft_tensor = None
-            if self.modelo in ("fft", "hibrido_early", "hibrido_late"):
+            if self.modelo in ("fft", "hibrido_early", "hibrido_late", "hibrido_late_voto", "hibrido_late_meta"):
                 x_fft_np = np.abs(rfft(x_time_np, axis=1))
                 x_fft_np = (x_fft_np / x_time_np.shape[1]).astype(np.float32).reshape(1, -1)
                 x_fft_tensor = torch.from_numpy(x_fft_np).to(self.device)
@@ -341,6 +366,26 @@ class AgnosticEvaluatorUnificado:
                     prob_f = torch.softmax(out_f, dim=1)[0, 1].item()
                     eps = 1e-7
                     prob = float(np.sqrt(np.clip(prob_t, eps, 1 - eps) * np.clip(prob_f, eps, 1 - eps)))
+                elif self.modelo == "hibrido_late_voto":
+                    out_t = self.model_time(x_time_tensor)
+                    prob_t = torch.softmax(out_t, dim=1)[0, 1].item()
+                    out_f = self.model_fft(x_fft_tensor)
+                    prob_f = torch.softmax(out_f, dim=1)[0, 1].item()
+                    pred_t = int(prob_t >= self.threshold)
+                    pred_f = int(prob_f >= self.threshold)
+                    suma_votos = pred_t + pred_f
+                    if suma_votos == 2:
+                        prob = 1.0
+                    elif suma_votos == 0:
+                        prob = 0.0
+                    else:
+                        prob = (prob_t + prob_f) / 2.0
+                elif self.modelo == "hibrido_late_meta":
+                    out_t = self.model_time(x_time_tensor)
+                    prob_t = torch.softmax(out_t, dim=1)[0, 1].item()
+                    out_f = self.model_fft(x_fft_tensor)
+                    prob_f = torch.softmax(out_f, dim=1)[0, 1].item()
+                    prob = float(self.meta_clf.predict_proba([[prob_t, prob_f]])[0, 1])
             pred = int(prob >= self.threshold)
             results_log.append({
                 "timestamp": current_time.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
@@ -384,7 +429,7 @@ class AgnosticEvaluatorUnificado:
             x_time_np = np.expand_dims(flat_scaled, axis=0).astype(np.float32)
             x_time_tensor = torch.from_numpy(x_time_np).to(self.device)
             x_fft_tensor = None
-            if self.modelo in ("fft", "hibrido_early", "hibrido_late"):
+            if self.modelo in ("fft", "hibrido_early", "hibrido_late", "hibrido_late_voto", "hibrido_late_meta"):
                 x_fft_np = np.abs(rfft(x_time_np, axis=1))
                 x_fft_np = (x_fft_np / x_time_np.shape[1]).astype(np.float32).reshape(1, -1)
                 x_fft_tensor = torch.from_numpy(x_fft_np).to(self.device)
@@ -405,6 +450,26 @@ class AgnosticEvaluatorUnificado:
                     prob_f = torch.softmax(out_f, dim=1)[0, 1].item()
                     eps = 1e-7
                     prob = float(np.sqrt(np.clip(prob_t, eps, 1 - eps) * np.clip(prob_f, eps, 1 - eps)))
+                elif self.modelo == "hibrido_late_voto":
+                    out_t = self.model_time(x_time_tensor)
+                    prob_t = torch.softmax(out_t, dim=1)[0, 1].item()
+                    out_f = self.model_fft(x_fft_tensor)
+                    prob_f = torch.softmax(out_f, dim=1)[0, 1].item()
+                    pred_t = int(prob_t >= self.threshold)
+                    pred_f = int(prob_f >= self.threshold)
+                    suma_votos = pred_t + pred_f
+                    if suma_votos == 2:
+                        prob = 1.0
+                    elif suma_votos == 0:
+                        prob = 0.0
+                    else:
+                        prob = (prob_t + prob_f) / 2.0
+                elif self.modelo == "hibrido_late_meta":
+                    out_t = self.model_time(x_time_tensor)
+                    prob_t = torch.softmax(out_t, dim=1)[0, 1].item()
+                    out_f = self.model_fft(x_fft_tensor)
+                    prob_f = torch.softmax(out_f, dim=1)[0, 1].item()
+                    prob = float(self.meta_clf.predict_proba([[prob_t, prob_f]])[0, 1])
             pred = int(prob >= self.threshold)
             results_log.append({
                 "timestamp": current_time.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
@@ -502,9 +567,11 @@ def elegir_modelo_interactivo() -> str:
     print("  2. Transformer")
     print("  3. Hibrido Early Fusion")
     print("  4. Hibrido Late Fusion (Media Geometrica)")
-    opcion = input("Opcion (1-4): ").strip()
+    print("  5. Hibrido Late Fusion (Voto Mayoritario)")
+    print("  6. Hibrido Late Fusion (Meta-Clasificador)")
+    opcion = input("Opcion (1-6): ").strip()
     if opcion not in MODELOS_DISPONIBLES:
-        raise ValueError(f"Opcion invalida: {opcion}. Debe ser 1, 2, 3 o 4.")
+        raise ValueError(f"Opcion invalida: {opcion}. Debe ser 1-6.")
     return MODELOS_DISPONIBLES[opcion]
 def main() -> None:
     """Punto de entrada ejecutable."""
@@ -516,8 +583,10 @@ def main() -> None:
     parser.add_argument("--end", type=str, required=True)
     parser.add_argument(
         "--modelo", type=str, default=None,
-        choices=["1", "2", "3", "4", "fft", "transformer", "hibrido_early", "hibrido_late"],
-        help="1/fft, 2/transformer, 3/hibrido_early, 4/hibrido_late. Si se omite, se pregunta interactivamente."
+        choices=["1", "2", "3", "4", "5", "6", "fft", "transformer", "hibrido_early",
+                 "hibrido_late", "hibrido_late_voto", "hibrido_late_meta"],
+        help="1/fft, 2/transformer, 3/hibrido_early, 4/hibrido_late, 5/hibrido_late_voto, "
+             "6/hibrido_late_meta. Si se omite, se pregunta interactivamente."
     )
     parser.add_argument(
         "-o", "--output-dir", type=Path,
