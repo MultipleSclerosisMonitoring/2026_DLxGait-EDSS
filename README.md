@@ -84,14 +84,14 @@ python -m A04_TRANSFORMER.Agnostic_evaluator \\
 
 ### Resultados LOPO (27 pacientes, umbral 0.5)
 
-| Esquema | AUC global | AUC promedio/paciente | STD |
-|---|---|---|---|
-| FFT (solo) | 0.9813 | 0.9761 | 0.0780 |
-| Media Geométrica | 0.9781 | 0.9876 | 0.0303 |
-| Meta-Clasificador | 0.9774 | 0.9879 | 0.0317 |
-| Voto Mayoritario | 0.9529 | 0.9457 | 0.1171 |
-| Híbrido (Early Fusion) | 0.9374 | — | — |
-| Transformer (solo) | 0.9386 | — | — |
+| Esquema | AUC global | PR-AUC | BalAcc | MCC | Brier | AUC promedio/paciente | STD |
+|---|---|---|---|---|---|---|---|
+| FFT (solo) | 0.9813 | 0.9827 | 0.9461 | 0.8891 | 0.0471 | 0.9761 | 0.0780 |
+| Media Geométrica | 0.9781 | 0.9785 | 0.9313 | 0.8578 | 0.0662 | 0.9876 | 0.0303 |
+| Meta-Clasificador | 0.9774 | 0.9676 | 0.9290 | 0.8546 | 0.0517 | 0.9879 | 0.0317 |
+| Voto Mayoritario | 0.9529 | 0.9486 | 0.9314 | 0.8585 | 0.0604 | 0.9457 | 0.1171 |
+| Híbrido (Early Fusion) | 0.9374 | 0.9407 | 0.9051 | 0.8062 | 0.0898 | — | — |
+| Transformer (solo) | 0.9386 | 0.9566 | 0.9016 | 0.7994 | 0.0940 | — | — |
 
 FFT domina en AUC global; Media Geométrica y Meta-Clasificador son más consistentes entre pacientes (ver memoria, Sección 4.2 y 5.1 para el análisis completo del trade-off).
 
