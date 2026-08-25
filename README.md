@@ -36,7 +36,7 @@ Antes de ejecutar cualquier pipeline, edite `A01_EXTRACCION_DATOS/config.yaml` c
 
 ## Bloque 1 — Biomecánica Temporal (`A06_ANALISIS_CINEMATICO`)
 
-Detecta eventos de marcha por presión plantar y calcula métricas temporales bilaterales. La reconstrucción espacial (trayectoria, velocidad, MTC) fue descartada tras evaluación con el director del TFM por no producir resultados clínicamente creíbles (integración inercial propensa a deriva).
+Detecta eventos de marcha por presión plantar y calcula métricas temporales bilaterales.
 
 \`\`\`bash
 python A06_ANALISIS_CINEMATICO/Orquestador_temporal.py \\
@@ -104,12 +104,6 @@ python A04_TRANSFORMER/EVALUACION_MODELOS.py --dataset "DATASET_HDF5/dataset_jer
 
 ## Bloque 3 — Clasificación con GPS (`A07_TRAYECTORIA_GPS`)
 
-**Rediseñado:** ya no predice trayectoria (X, Y), sino que usa el GPS como **rama discreta auxiliar** para la misma tarea de clasificación de A04, fusionada mediante atención cruzada.
-
-### Por qué se descartó la reconstrucción de trayectoria
-El GPS de los calcetines es la única fuente de posición disponible (confirmado por inventario de InfluxDB), con lecturas cada 7-80 segundos — insuficiente para trayectoria fina (error final: 20-60 m). El enfoque original además interpolaba (PCHIP) una curva densa entre lecturas dispersas, entrenando el modelo contra una suposición matemática, no contra movimiento real. Los scripts de esa versión ya no existen en el repositorio.
-
-### Diseño actual
 - **IMU/presión**: rama densa (PSD, 348 dimensiones), igual que A04.
 - **GPS**: rama discreta con `delta_t`, posición UTM forward-filled, y máscara de observación (1.0 si es lectura real, 0.0 si es relleno).
 - **Fusión**: `nn.MultiheadAttention`, IMU como query, GPS como key/value.
