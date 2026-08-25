@@ -163,4 +163,5 @@ Sigue PEP8, tipado estricto, y validación reproducible tras clonado limpio.
 ## Autor
 
 **Jairo Eduardo Paez Leal** — Máster en Ingeniería de Organización, ETSII, UPM
+
 **Tutor:** Joaquín Bienvenido Ordieres Meré — ETSII, UPM
